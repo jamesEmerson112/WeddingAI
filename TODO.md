@@ -25,15 +25,20 @@ venue. Model pinned: `gemini-3.5-flash`.
 - [x] Upload page integration: theme designer card on `frontend/app/page.tsx`
       with palette swatches, coverage verdict banner, and the visible "powered
       by Google Gemini" disclosure (spec §2).
-- [ ] Env plumbing:
-  - [ ] Copy the key (manual, so it never transits tooling):
-        `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`
-  - [x] `frontend/.env.example` created (GEMINI_API_KEY=, NEXT_PUBLIC_API_URL=).
-  - [ ] Set `GEMINI_API_KEY` in Vercel env vars (Production) — required for the
-        deployed demo.
-- [ ] Live-call verification (route error paths smoke-tested; a real Gemini call
-      needs the key in `.env.local` / Vercel).
+- [x] Env plumbing: key in Vercel Production env AND `frontend/.env`
+      (gitignored); `frontend/.env.example` created.
+- [x] Live-call verification of `/api/analyze` (real image → real structured
+      report on the public URL, ~20:52 UTC).
+- [ ] **`/api/render` blocked on key tier**: free-tier key has no image-gen
+      quota (429 `generate_content_free_tier`). Fix = billing upgrade or billed
+      key swap; NO code change. Also blocks the image→3D pipeline run.
 - [ ] (cut for time) Preloaded example photo set for one-click judging.
+
+## 1.5 UI mockup implementation (NEXT — user request ~20:53 UTC)
+
+- [ ] Implement the UI mockup on the frontend. Mockup source/scope to be
+      provided by the user (post-compact); no pushes before the 2:30 PM
+      in-person demo — build locally, ship after.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 

@@ -124,16 +124,52 @@ VRAM, no multi-GPU.
 - Railway volume for SQLite NOT confirmed attached — until it is (mount `/data`
   + `DATABASE_URL=sqlite:///data/data.db?mode=rwc`), the DB resets on each
   redeploy. Optional: set Railway healthcheck path to `/api/health`.
-- **Frontend deployed but NOT wired**: `https://wedding-ai-omega.vercel.app`
-  has `localhost:8080` baked into its JS bundle. USER ACTION pending: set BOTH
-  `NEXT_PUBLIC_API_URL=https://weddingai-production.up.railway.app` and
-  `GEMINI_API_KEY` (value from `backend/.env`) in Vercel env vars — the
-  ~20:25 UTC push rebuilds with them baked in; then run the incognito
-  end-to-end test (upload → theme card → stepper → placeholder viewer).
+- **Frontend FULLY WIRED + Gemini key LIVE (verified ~20:52 UTC)**:
+  `https://wedding-ai-omega.vercel.app` bundle points at Railway; both env vars
+  set in Vercel Production. `/api/analyze` verified END-TO-END on the live site
+  with a real image → real `gemini-3.5-flash` structured report. Key also in
+  `frontend/.env` (verified gitignored via `frontend/.gitignore:34`) for local
+  dev. Still to run: full incognito upload → viewer test.
+- **`/api/render` DEPLOYED but BLOCKED BY KEY TIER**: live calls 429 with
+  `generate_content_free_tier` quota exceeded — the Gemini key's project is
+  FREE TIER, which has no real image-generation allowance (text models work).
+  Verified via direct REST: `gemini-2.5-flash-image` IS on the key's model
+  list, metadata resolves, generateContent → 429. **Code and model ID are
+  correct — NO code change needed.** USER ACTION: enable billing / upgrade the
+  key's project to Tier 1 (ai.google.dev) or swap `GEMINI_API_KEY` to a billed
+  project's key in Vercel + `frontend/.env`. Until then the "Visualize theme"
+  button 502s gracefully (demo can skip it). **This also blocks the afternoon
+  generated-images→LichtFeld run** — image generation is the product's input.
+- **Vision render feature shipped** (`6850bf1`, ~20:39 UTC): `/api/render`
+  route (image-to-image: one venue photo + theme → concept render), "Visualize
+  theme" button on the report card. An ultracode verify fleet (4 Sonnet finders
+  → Opus adversarial verifiers; 8 raw findings, 1 confirmed) caught a real
+  race — in-flight Gemini responses landing on a swapped photo set — fixed via
+  a `requestSeq` ref guard in `page.tsx`.
+- **Demo seeds DONE (~20:56 UTC): 4 jobs in state `done` on the live backend**
+  (ids b9519ad8…, 36bae690…, 6af675f0…, canary 27669f78…), each opens the
+  placeholder viewer. Observed: Railway did NOT rebuild for the frontend-only
+  push `6850bf1` (likely a backend/ watch path), so frontend-only pushes seem
+  DB-safe — but keep the conservative rule anyway:
+- **Push freeze LIFTED (user call, ~21:05 UTC)** — pushes are fine anytime:
+  both platforms deploy zero-downtime, so the demo link never goes dark. Only
+  consequence of a backend-touching push is a Railway DB wipe → re-run the
+  seed script (`scratchpad/seed-demo-jobs.sh` of session 6de23d68, ~30s) and
+  the 4 demo scenes are back.
+- **NEXT PHASE (user, ~20:53 UTC): implement the UI mockup on the frontend**
+  (mockup source/details to be specified by the user post-compact), then the
+  afternoon image→3D run for the end-of-day complete submission.
 - CORS still permissive — restrict to the Vercel domain before judging.
-- **Gemini feature SHIPPED 2026-07-19 ~20:25 UTC** — product angle decided by
-  the user: **AI wedding-theme designer** (photos → `gemini-3.5-flash`
-  structured theme report → walkable 3D venue). Server-side only route
+- **PRODUCT DEFINITION (user's words, 2026-07-19 ~20:45 UTC)**: "use the
+  generated images then get processed into a 3D with LichtFeld" — i.e. Gemini
+  GENERATES the themed venue images and **those generated images are the input
+  to the LichtFeld 3D pipeline**. Today's build = step 1 (theme +
+  `gemini-2.5-flash-image` venue render, live) + the pipeline skeleton (mock);
+  the generated-images→LichtFeld hop is the next milestone (needs the banked
+  volume build + a multi-view-consistent generation strategy). All pitch and
+  README copy must describe the product this way.
+- **Gemini feature SHIPPED 2026-07-19 ~20:25 UTC** — first slice: theme
+  designer (photos → `gemini-3.5-flash` structured theme report). Server-side only route
   `frontend/app/api/analyze/route.ts` (response schema, 400/502/504 error
   mapping, 50s timeout, maxDuration=60); client `frontend/lib/theme.ts`
   (canvas downscale to ~1024px JPEG, ≤8 sampled photos, localStorage demo
@@ -155,11 +191,18 @@ A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
 - **Build running**: `/workspace/phase0_build.sh` (runbook steps 2–4) in tmux
   session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones
   (check: `grep -E "^=== " /workspace/build.log | tail`). Started 19:36 UTC;
-  as of 20:15 UTC STILL in the vcpkg dependency phase (configure started 19:44) —
-  slower than hoped. **Hackathon verdict (20:15 UTC): no LichtFeld run today**;
-  demo ships on the mock pipeline. Terminate the pod ~21:00 UTC (2:00 PM PT),
-  KEEP the volume — the script is idempotent and vcpkg caches on the volume, so
-  a future pod resumes by rerunning `/workspace/phase0_build.sh`. Deliberate
+  as of 20:15 UTC STILL in the vcpkg dependency phase (configure started 19:44).
+  **DEADLINE CORRECTION (user, ~20:48 UTC): 2:30 PM PT is only the IN-PERSON
+  demo; the complete submission is due END OF DAY.** So: the 2:30 demo ships on
+  the mock pipeline, and the REAL run happens this afternoon — **KEEP THE POD
+  RUNNING through the demo** (overrides the earlier terminate-at-2:00 note; the
+  build must finish for the afternoon session). Afternoon plan ("rough is fine"
+  per user): COLMAP on ORIGINAL photos for consistent poses → Gemini-restyle
+  20–40 of them with one fixed theme prompt → train LichtFeld on the restyled
+  images (-i 7000 first) → convert to scene.html → scp down → commit to
+  frontend/public/ + point a job's artifacts_json at it → push + re-run the
+  seed script. If the pod dies mid-build, rerun `/workspace/phase0_build.sh`
+  (idempotent, vcpkg caches on the volume). Deliberate
   deviations from the runbook: `-j16` and `VCPKG_MAX_CONCURRENCY=16` (60 GB RAM
   OOM guard on 32 cores).
 - **COLMAP already installed** (runbook step 5 DONE, in parallel): `/usr/bin/colmap`,
@@ -184,3 +227,41 @@ A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
   files (gitignored) and are used server-side only.
 - CORS is `permissive()` in `main.rs` with a TODO to restrict before production —
   relevant once deployed for judging.
+
+## Context history
+
+### 2026-07-19 20:54 UTC — hackathon day session
+
+**Accomplished:**
+- Shipped mandatory Gemini feature: theme designer — `frontend/app/api/analyze/route.ts`
+  (gemini-3.5-flash, structured output, 400/502/504 error mapping) + client lib
+  `frontend/lib/theme.ts` (downscale, evenly-sampled ≤8 photos, localStorage demo
+  cache) + report card UI in `frontend/app/page.tsx`. Commits `697a128`, `6850bf1`.
+- Shipped vision render: `frontend/app/api/render/route.ts` (gemini-2.5-flash-image,
+  image-to-image venue restyle) + "Visualize theme" button.
+- Ran an ultracode verify fleet (4 Sonnet finders + Opus adversarial verifiers,
+  12 agents): 8 raw findings, 1 confirmed — stale in-flight Gemini response race
+  on photo-set swap — fixed with a `requestSeq` ref guard in `page.tsx`.
+- Live-verified frontend↔backend wiring on wedding-ai-omega.vercel.app;
+  `/api/analyze` confirmed end-to-end with a real Gemini call on the public URL.
+- Root-caused `/api/render` failure to the Gemini key being FREE TIER (429
+  `generate_content_free_tier` via direct REST test; model exists on the key,
+  code is correct, no code change needed).
+- Product definition locked (user's words): Gemini GENERATES the themed venue
+  images and those generated images are the input to the LichtFeld 3D pipeline.
+- Deadline corrected: 2:30 PM PT is only the in-person demo; complete submission
+  due end of day. Pod kept alive through the demo for the afternoon image→3D run.
+
+**Open questions:**
+1. UI mockup: which mockup/design source should the frontend implement? (user
+   to specify — declared next phase)
+2. Gemini key billing: when will the key's project be upgraded to a paid tier
+   (or a billed key swapped in)? Blocks `/api/render` AND the afternoon
+   generated-images→LichtFeld run.
+3. Afternoon run: which 40–60 photo set of one place will be used, and how
+   many restyled images (~20–40) are wanted?
+4. Railway volume still not attached — DB resets on every deploy; accept for
+   demo or attach before end-of-day submission?
+5. Restrict permissive CORS to the Vercel domain before the end-of-day submission?
+6. Submission materials (README restructure, pitch video, demo video,
+   screenshots — TODO.md item 3) are all not started; when to begin this afternoon?
