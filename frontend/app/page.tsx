@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import JSZip from "jszip";
 import { createUpload, putZip, createJob } from "@/lib/api";
-import { analyzePhotos, type ThemeReport } from "@/lib/theme";
+import { analyzePhotos, renderTheme, type ThemeReport } from "@/lib/theme";
 
 // How many training iterations to request for a new job. 7000 is a reasonable
 // default for a quick splat; the backend accepts this as the `iters` field.
@@ -27,6 +27,17 @@ export default function UploadPage() {
   const [themeCached, setThemeCached] = useState(false);
   const [themeError, setThemeError] = useState<string | null>(null);
 
+  // Vision render state: Gemini's image model redraws the venue in the theme.
+  const [renderImage, setRenderImage] = useState<string | null>(null);
+  const [renderBusy, setRenderBusy] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  // Bumped whenever the photo selection changes. Async Gemini responses check
+  // it before painting, so a slow reply for an old photo set can never land on
+  // a new one. A ref (not state) because state reads inside the async closure
+  // would be stale by resolve time.
+  const requestSeq = useRef(0);
+
   // Total size of the selected photos in megabytes, for the summary line.
   const totalMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
 
@@ -38,10 +49,14 @@ export default function UploadPage() {
     if (!list) return;
     const images = Array.from(list).filter((f) => f.type.startsWith("image/"));
     setFiles(images);
-    // New photo set → the old theme report no longer applies.
+    // New photo set → the old theme report and render no longer apply, and any
+    // in-flight Gemini response for the old set must not paint over this one.
+    requestSeq.current++;
     setReport(null);
     setThemeCached(false);
     setThemeError(null);
+    setRenderImage(null);
+    setRenderError(null);
   }
 
   // Ask Gemini (via our server route) for a theme designed around these photos.
@@ -49,16 +64,40 @@ export default function UploadPage() {
   // localStorage cache inside analyzePhotos and resolves instantly.
   async function designTheme() {
     if (files.length === 0 || themeBusy) return;
+    const myReq = requestSeq.current;
     setThemeError(null);
     setThemeBusy(true);
     try {
       const result = await analyzePhotos(files, { force: report !== null });
+      if (requestSeq.current !== myReq) return; // photo set changed mid-flight
       setReport(result.report);
       setThemeCached(result.cached);
+      // A new theme invalidates any previous render of the old one.
+      setRenderImage(null);
+      setRenderError(null);
     } catch (e) {
+      if (requestSeq.current !== myReq) return;
       setThemeError(e instanceof Error ? e.message : String(e));
     } finally {
       setThemeBusy(false);
+    }
+  }
+
+  // Ask Gemini's image model for a concept render of THIS venue in the theme.
+  async function visualizeTheme() {
+    if (!report || files.length === 0 || renderBusy) return;
+    const myReq = requestSeq.current;
+    setRenderError(null);
+    setRenderBusy(true);
+    try {
+      const image = await renderTheme(files, report);
+      if (requestSeq.current !== myReq) return; // photo set changed mid-flight
+      setRenderImage(image);
+    } catch (e) {
+      if (requestSeq.current !== myReq) return;
+      setRenderError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRenderBusy(false);
     }
   }
 
@@ -277,6 +316,41 @@ export default function UploadPage() {
                     #{t}
                   </span>
                 ))}
+              </div>
+
+              {/* Vision render: Gemini redraws the venue decorated in the theme. */}
+              <div>
+                <button
+                  onClick={visualizeTheme}
+                  disabled={renderBusy}
+                  className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                >
+                  {renderBusy
+                    ? "Rendering…"
+                    : renderImage
+                      ? "Re-render"
+                      : "Visualize theme"}
+                </button>
+                {renderError && (
+                  <div className="mt-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                    {renderError}
+                  </div>
+                )}
+                {renderImage && (
+                  <figure className="mt-3">
+                    {/* Data URL from our own API — next/image can't optimize it. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={renderImage}
+                      alt={`AI concept render of the venue in the "${report.theme_name}" theme`}
+                      className="w-full rounded-md border border-zinc-200 dark:border-zinc-800"
+                    />
+                    <figcaption className="mt-1 text-[11px] text-zinc-400">
+                      AI concept render — Gemini reimagines your venue in this
+                      theme.
+                    </figcaption>
+                  </figure>
+                )}
               </div>
             </div>
           )}

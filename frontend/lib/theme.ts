@@ -49,7 +49,7 @@ function sample(files: File[]): File[] {
 // Downscale one photo to a small JPEG and return its base64 payload. Returns
 // null for files the browser can't decode (e.g. HEIC on some platforms) so the
 // caller can skip them instead of failing the whole batch.
-async function downscale(
+export async function downscale(
   file: File,
 ): Promise<{ data: string; mimeType: string } | null> {
   try {
@@ -107,4 +107,36 @@ export async function analyzePhotos(
     // Storage full or blocked — caching is best-effort.
   }
   return { report, cached: false };
+}
+
+// Ask Gemini's image model to redraw the venue in the proposed theme. Sends the
+// middle photo of the set (usually a representative interior view) plus the
+// theme summary; returns a data: URL ready for an <img>. Not cached — base64
+// images blow past localStorage quotas, so the result lives in React state.
+export async function renderTheme(
+  files: File[],
+  report: ThemeReport,
+): Promise<string> {
+  const image = await downscale(files[Math.floor(files.length / 2)]);
+  if (!image) throw new Error("Couldn't read a venue photo to render from.");
+
+  const res = await fetch("/api/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      theme: {
+        theme_name: report.theme_name,
+        one_liner: report.one_liner,
+        description: report.description,
+        palette: report.color_palette.map((c) => `${c.name} (${c.hex})`),
+      },
+      image,
+    }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Render failed (${res.status})`);
+  }
+  const { image: dataUrl } = (await res.json()) as { image: string };
+  return dataUrl;
 }
