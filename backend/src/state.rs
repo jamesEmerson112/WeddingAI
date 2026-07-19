@@ -8,6 +8,10 @@ use crate::worker_client::WorkerClient;
 pub struct Config {
     pub mock_mode: bool,
     pub port: u16,
+    /// Base URL clients can reach this backend on. The mock upload sink hands
+    /// the browser an absolute URL built from this — it must be the *public*
+    /// address when deployed, not localhost.
+    pub public_base_url: String,
     pub runpod_api_key: String,
     pub runpod_endpoint_id: String,
 }
@@ -23,12 +27,27 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(8080);
+        // Resolution order: explicit PUBLIC_BASE_URL, else Railway's injected
+        // public domain (so deploys there need no extra config), else localhost.
+        let public_base_url = std::env::var("PUBLIC_BASE_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                std::env::var("RAILWAY_PUBLIC_DOMAIN")
+                    .ok()
+                    .filter(|v| !v.is_empty())
+                    .map(|domain| format!("https://{domain}"))
+            })
+            .unwrap_or_else(|| format!("http://localhost:{port}"))
+            .trim_end_matches('/')
+            .to_string();
         // Empty strings are fine in mock mode; real mode needs them filled in.
         let runpod_api_key = std::env::var("RUNPOD_API_KEY").unwrap_or_default();
         let runpod_endpoint_id = std::env::var("RUNPOD_ENDPOINT_ID").unwrap_or_default();
         Config {
             mock_mode,
             port,
+            public_base_url,
             runpod_api_key,
             runpod_endpoint_id,
         }

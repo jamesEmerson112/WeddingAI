@@ -51,11 +51,12 @@ async fn create_upload(State(state): State<AppState>) -> Result<Json<Value>, Api
     let upload_key = format!("uploads/{id}.zip");
 
     if state.config.mock_mode {
-        // Mock mode: hand back a URL pointing at our own local PUT sink (below).
-        // The frontend's upload code is then IDENTICAL in mock and real mode — it
-        // just PUTs the bytes to whatever `upload_url` we return here.
-        let port = state.config.port;
-        let upload_url = format!("http://localhost:{port}/api/mock-upload/{id}");
+        // Mock mode: hand back a URL pointing at our own PUT sink (below). The
+        // frontend's upload code is then IDENTICAL in mock and real mode — it
+        // just PUTs the bytes to whatever `upload_url` we return here. Built on
+        // the public base URL because it's the *browser* that PUTs to it.
+        let base = &state.config.public_base_url;
+        let upload_url = format!("{base}/api/mock-upload/{id}");
         Ok(Json(json!({
             "upload_key": upload_key,
             "upload_url": upload_url,
