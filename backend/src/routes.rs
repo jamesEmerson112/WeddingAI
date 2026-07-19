@@ -26,6 +26,7 @@ type ApiError = (StatusCode, String);
 /// The caller (`main`) wraps the returned router in a CORS layer before serving.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/api/health", get(health))
         .route("/api/uploads", post(create_upload))
         // The mock upload sink accepts a real photo zip, which is far larger than
         // axum's default 2MB body cap — bump the limit to 500MB *for this route
@@ -38,6 +39,37 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs", post(create_job).get(list_jobs))
         .route("/api/jobs/{id}", get(get_job))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/health — one request that proves process, DB, and config are good.
+// ---------------------------------------------------------------------------
+
+/// Health probe. Returns 200 with a config snapshot when the DB answers a
+/// trivial query, 503 otherwise — so a deploy healthcheck pointed here refuses
+/// to go live with a bad DATABASE_URL or a broken volume mount.
+async fn health(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+    match sqlx::query("SELECT 1").execute(&state.db).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({
+                "status": "ok",
+                "db": "ok",
+                // The two config values that decide whether a deploy actually
+                // works — surfaced here so one curl answers "is it wired right?"
+                "mock_mode": state.config.mock_mode,
+                "public_base_url": state.config.public_base_url,
+                "version": env!("CARGO_PKG_VERSION"),
+            })),
+        ),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "status": "degraded",
+                "db": e.to_string(),
+            })),
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,4 +197,54 @@ async fn list_jobs(State(state): State<AppState>) -> Result<Json<Vec<db::Job>>, 
 /// `.map_err(internal)?` on any fallible DB call.
 fn internal<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Config;
+    use sqlx::SqlitePool;
+
+    // Config is built by hand rather than via from_env: mutating env vars in
+    // tests is racy (tests run in parallel in one process).
+    fn test_config() -> Config {
+        Config {
+            mock_mode: true,
+            port: 8080,
+            public_base_url: "http://localhost:8080".to_string(),
+            runpod_api_key: String::new(),
+            runpod_endpoint_id: String::new(),
+        }
+    }
+
+    async fn test_state() -> AppState {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite always connects");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations apply cleanly");
+        AppState::new(pool, test_config())
+    }
+
+    #[tokio::test]
+    async fn health_reports_ok_with_reachable_db() {
+        let (status, Json(body)) = health(State(test_state().await)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["db"], "ok");
+        assert_eq!(body["mock_mode"], true);
+        assert_eq!(body["public_base_url"], "http://localhost:8080");
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn health_reports_degraded_when_db_is_gone() {
+        let state = test_state().await;
+        state.db.close().await;
+        let (status, Json(body)) = health(State(state)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["status"], "degraded");
+    }
 }

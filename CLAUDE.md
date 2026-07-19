@@ -84,7 +84,7 @@ Backend file responsibilities (each owns one concern):
 | `backend/src/main.rs` | startup wiring: env → DB → migrate → router → serve |
 | `backend/src/state.rs` | `Config` + `AppState`; the one mock-vs-real switch |
 | `backend/src/db.rs` | `Job` struct, state-machine transitions, every SQL query, the tests |
-| `backend/src/routes.rs` | HTTP endpoints: `POST /api/uploads`, `POST/GET /api/jobs`, `GET /api/jobs/{id}`, mock upload sink |
+| `backend/src/routes.rs` | HTTP endpoints: `GET /api/health`, `POST /api/uploads`, `POST/GET /api/jobs`, `GET /api/jobs/{id}`, mock upload sink |
 | `backend/src/worker_client.rs` | the `Mock`/`Runpod` enum seam — how a job is handed to a GPU |
 | `backend/src/poller.rs` | background Tokio task nudging active jobs forward every 5s |
 
