@@ -111,6 +111,32 @@ Pipeline gotchas from the LichtFeld manual: COLMAP images must be **undistorted*
 every load — pre-resize photos before training; GPU floor is SM 7.5 with 8 GB+
 VRAM, no multi-GPU.
 
+## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~19:45 UTC)
+
+A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
+
+- **Pod**: RTX 5090 (32 GB, 32 vCPU, Ubuntu 24.04, CUDA 12.8.93 toolkit at
+  `/usr/local/cuda` — NOT on default SSH PATH), euro-3 datacenter.
+  **120 GB network volume at `/workspace` (persistent), 30 GB container disk.**
+- **SSH**: endpoint lives in `.env.pod` at the repo root (gitignored — CLAUDE.md
+  is pushed, so no live host/port here). It's the "exposed TCP" variant (supports
+  scp; the proxy variant does not). The endpoint dies with the pod; a replacement
+  pod gets new values (user pastes them into `.env.pod`).
+- **Build running**: `/workspace/phase0_build.sh` (runbook steps 2–4) in tmux
+  session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones.
+  Started 19:36 UTC; ETA 20:20–20:50 UTC. Deliberate deviations from the runbook:
+  `-j16` and `VCPKG_MAX_CONCURRENCY=16` (60 GB RAM OOM guard on 32 cores).
+  Script is idempotent — rerun to resume; vcpkg caches completed deps on the volume.
+- **When build finishes**: `/workspace/dist/bin/run_lichtfeld.sh --help` is the
+  sanity check AND the first-ever Blackwell/5090 JIT test (docs never mention
+  Blackwell; escape hatch = rent a 4090 in euro-3, same volume, same PTX binary).
+- **Next**: runbook steps 5–11 — COLMAP install, scp photos (40–60 of one place)
+  to `/workspace/project/images`, SfM, train (`-i 7000` first to bank a result,
+  then 30k if time allows), `convert` to .html/.sog, scp down, RECORD all timings
+  in `docs/phase0-notes.md`. User has ~1-hour windows — bank results early.
+- **Iron rule**: end of session = TERMINATE THE POD, KEEP THE VOLUME. The build
+  and all data live on `/workspace` and survive. Idle pods bill ~$1/hr.
+
 ## Rules that override defaults
 
 - **Next.js version warning**: `frontend/AGENTS.md` (included by
