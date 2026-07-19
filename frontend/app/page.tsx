@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import JSZip from "jszip";
 import { createUpload, putZip, createJob } from "@/lib/api";
+import { analyzePhotos, type ThemeReport } from "@/lib/theme";
 
 // How many training iterations to request for a new job. 7000 is a reasonable
 // default for a quick splat; the backend accepts this as the `iters` field.
@@ -19,6 +20,13 @@ export default function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
+  // Gemini wedding-theme designer state, separate from the splat flow above so
+  // a failed analysis never blocks creating the 3D scene (and vice versa).
+  const [report, setReport] = useState<ThemeReport | null>(null);
+  const [themeBusy, setThemeBusy] = useState(false);
+  const [themeCached, setThemeCached] = useState(false);
+  const [themeError, setThemeError] = useState<string | null>(null);
+
   // Total size of the selected photos in megabytes, for the summary line.
   const totalMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
 
@@ -30,6 +38,28 @@ export default function UploadPage() {
     if (!list) return;
     const images = Array.from(list).filter((f) => f.type.startsWith("image/"));
     setFiles(images);
+    // New photo set → the old theme report no longer applies.
+    setReport(null);
+    setThemeCached(false);
+    setThemeError(null);
+  }
+
+  // Ask Gemini (via our server route) for a theme designed around these photos.
+  // Repeat clicks force a fresh take; the same set re-selected later hits the
+  // localStorage cache inside analyzePhotos and resolves instantly.
+  async function designTheme() {
+    if (files.length === 0 || themeBusy) return;
+    setThemeError(null);
+    setThemeBusy(true);
+    try {
+      const result = await analyzePhotos(files, { force: report !== null });
+      setReport(result.report);
+      setThemeCached(result.cached);
+    } catch (e) {
+      setThemeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setThemeBusy(false);
+    }
   }
 
   function onDrop(e: React.DragEvent) {
@@ -133,6 +163,129 @@ export default function UploadPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Gemini wedding-theme designer: the AI step between photos and splat. */}
+      {files.length > 0 && (
+        <div className="mt-6 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Wedding theme designer</h2>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Gemini studies your venue photos and designs a theme for the
+                space before the 3D scene is built.
+              </p>
+            </div>
+            <button
+              onClick={designTheme}
+              disabled={themeBusy}
+              className="shrink-0 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+            >
+              {themeBusy ? "Designing…" : report ? "Redesign" : "Design theme"}
+            </button>
+          </div>
+
+          {themeError && (
+            <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+              {themeError}
+            </div>
+          )}
+
+          {report && (
+            <div className="mt-4 space-y-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold">{report.theme_name}</h3>
+                  {themeCached && (
+                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800">
+                      cached
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-zinc-500 italic">{report.one_liner}</p>
+              </div>
+
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {report.description}
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                {report.color_palette.map((c) => (
+                  <span
+                    key={`${c.hex}-${c.name}`}
+                    className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-800"
+                  >
+                    <span
+                      className="h-3 w-3 rounded-full border border-black/10"
+                      style={{ backgroundColor: c.hex }}
+                    />
+                    {c.name}
+                  </span>
+                ))}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
+                    Decor
+                  </h4>
+                  <ul className="mt-1 list-disc pl-4 text-sm text-zinc-600 dark:text-zinc-400">
+                    {report.decor.map((d) => (
+                      <li key={d}>{d}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
+                    Florals
+                  </h4>
+                  <ul className="mt-1 list-disc pl-4 text-sm text-zinc-600 dark:text-zinc-400">
+                    {report.florals.map((f) => (
+                      <li key={f}>{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                <span className="font-medium">In your photos: </span>
+                {report.venue_observations}
+              </p>
+
+              {/* Coverage verdict doubles as splat-quality advice. */}
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  report.photo_coverage.verdict === "good"
+                    ? "border-green-300 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300"
+                    : report.photo_coverage.verdict === "usable"
+                      ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+                      : "border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                }`}
+              >
+                Photo set for 3D: <span className="font-semibold">{report.photo_coverage.verdict}</span>
+                {" — "}
+                {report.photo_coverage.advice}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {report.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                  >
+                    #{t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Spec §2: disclose what Gemini does, visibly. */}
+          <p className="mt-3 text-[11px] text-zinc-400">
+            Theme design &amp; photo check powered by Google Gemini. A downscaled
+            sample of your photos is analyzed server-side and not stored.
+          </p>
         </div>
       )}
 
