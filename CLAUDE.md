@@ -111,7 +111,37 @@ Pipeline gotchas from the LichtFeld manual: COLMAP images must be **undistorted*
 every load — pre-resize photos before training; GPU floor is SM 7.5 with 8 GB+
 VRAM, no multi-GPU.
 
-## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~19:45 UTC)
+## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~20:10 UTC)
+
+- **Backend LIVE**: `https://weddingai-production.up.railway.app` (mock mode).
+  `GET /api/health` verifies process + DB + config in one request (reports
+  `mock_mode`, `public_base_url`, `version`; 503 if DB unreachable). Railway
+  auto-deploys on every push to main via `backend/Dockerfile` (pins rust:1.88 —
+  Railway's default Railpack rustc 1.85 is too old for the locked `icu_*` crates).
+- Mock upload URL is built from `PUBLIC_BASE_URL`, falling back to Railway's
+  injected `RAILWAY_PUBLIC_DOMAIN`, else `http://localhost:PORT` (fixed
+  2026-07-19 — was hardcoded localhost, which broke the deployed upload flow).
+- Railway volume for SQLite NOT confirmed attached — until it is (mount `/data`
+  + `DATABASE_URL=sqlite:///data/data.db?mode=rwc`), the DB resets on each
+  redeploy. Optional: set Railway healthcheck path to `/api/health`.
+- **Frontend deployed but NOT wired**: `https://wedding-ai-omega.vercel.app`
+  has `localhost:8080` baked into its JS bundle. USER ACTION pending: set BOTH
+  `NEXT_PUBLIC_API_URL=https://weddingai-production.up.railway.app` and
+  `GEMINI_API_KEY` (value from `backend/.env`) in Vercel env vars — the
+  ~20:25 UTC push rebuilds with them baked in; then run the incognito
+  end-to-end test (upload → theme card → stepper → placeholder viewer).
+- CORS still permissive — restrict to the Vercel domain before judging.
+- **Gemini feature SHIPPED 2026-07-19 ~20:25 UTC** — product angle decided by
+  the user: **AI wedding-theme designer** (photos → `gemini-3.5-flash`
+  structured theme report → walkable 3D venue). Server-side only route
+  `frontend/app/api/analyze/route.ts` (response schema, 400/502/504 error
+  mapping, 50s timeout, maxDuration=60); client `frontend/lib/theme.ts`
+  (canvas downscale to ~1024px JPEG, ≤8 sampled photos, localStorage demo
+  cache keyed by photo set); report card + Gemini disclosure in
+  `frontend/app/page.tsx`. Locally needs `frontend/.env.local` — USER runs:
+  `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`.
+
+## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~20:10 UTC)
 
 A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
 
@@ -123,15 +153,22 @@ A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
   scp; the proxy variant does not). The endpoint dies with the pod; a replacement
   pod gets new values (user pastes them into `.env.pod`).
 - **Build running**: `/workspace/phase0_build.sh` (runbook steps 2–4) in tmux
-  session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones.
-  Started 19:36 UTC; ETA 20:20–20:50 UTC. Deliberate deviations from the runbook:
-  `-j16` and `VCPKG_MAX_CONCURRENCY=16` (60 GB RAM OOM guard on 32 cores).
-  Script is idempotent — rerun to resume; vcpkg caches completed deps on the volume.
+  session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones
+  (check: `grep -E "^=== " /workspace/build.log | tail`). Started 19:36 UTC;
+  as of 20:15 UTC STILL in the vcpkg dependency phase (configure started 19:44) —
+  slower than hoped. **Hackathon verdict (20:15 UTC): no LichtFeld run today**;
+  demo ships on the mock pipeline. Terminate the pod ~21:00 UTC (2:00 PM PT),
+  KEEP the volume — the script is idempotent and vcpkg caches on the volume, so
+  a future pod resumes by rerunning `/workspace/phase0_build.sh`. Deliberate
+  deviations from the runbook: `-j16` and `VCPKG_MAX_CONCURRENCY=16` (60 GB RAM
+  OOM guard on 32 cores).
+- **COLMAP already installed** (runbook step 5 DONE, in parallel): `/usr/bin/colmap`,
+  log at `/workspace/colmap_install.log`.
 - **When build finishes**: `/workspace/dist/bin/run_lichtfeld.sh --help` is the
   sanity check AND the first-ever Blackwell/5090 JIT test (docs never mention
   Blackwell; escape hatch = rent a 4090 in euro-3, same volume, same PTX binary).
-- **Next**: runbook steps 5–11 — COLMAP install, scp photos (40–60 of one place)
-  to `/workspace/project/images`, SfM, train (`-i 7000` first to bank a result,
+- **Next**: runbook steps 6–11 — scp photos (40–60 of one place) to
+  `/workspace/project/images`, SfM, train (`-i 7000` first to bank a result,
   then 30k if time allows), `convert` to .html/.sog, scp down, RECORD all timings
   in `docs/phase0-notes.md`. User has ~1-hour windows — bank results early.
 - **Iron rule**: end of session = TERMINATE THE POD, KEEP THE VOLUME. The build

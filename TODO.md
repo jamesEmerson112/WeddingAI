@@ -3,48 +3,55 @@
 Ordered toward submission — see `docs/hackathon-spec.md` §9 (deliverables) and §12
 (definition of done).
 
-## 1. Gemini photo-analysis feature (deferred 2026-07-19)
+## 1. Gemini wedding-theme feature (SHIPPED 2026-07-19 ~20:25 UTC)
 
-The hackathon's required Gemini capability. Design agreed, implementation not started.
-Model is pinned: `gemini-3.5-flash` (see CLAUDE.md). SDK `@google/genai` is already
-installed in `frontend/`.
+The hackathon's required Gemini capability. Product angle (user-decided):
+**AI wedding-theme designer** — photos → structured theme report → walkable 3D
+venue. Model pinned: `gemini-3.5-flash`.
 
-- [ ] `frontend/app/api/analyze/route.ts` — POST route handler (server-side, key never
-      reaches the browser): accepts photos as multipart form data, calls
-      `gemini-3.5-flash` with a system instruction + structured-output JSON schema
-      (verdict good/usable/poor, score, per-issue list with severity — blur / low
-      overlap / reflective / textureless / exposure, reshoot advice, scene
-      title/description/tags for the gallery).
-- [ ] Error handling per hackathon spec: missing input (400), unsupported file type
-      (400), Gemini failure (502), timeout (504), malformed/unparseable response
-      (502 with graceful fallback). No stack traces or key material in responses.
-- [ ] Client-side downscale before upload (canvas → ~1024px JPEG): Gemini inline
-      request limit is ~20 MB total, so raw phone photos won't fit — resize in the
-      browser, then send up to ~24 sampled photos.
-- [ ] Upload page (`frontend/app/page.tsx`) integration: "Check photos" step before
-      "Create Splat", result card showing the report, visible "Photo check powered
-      by Gemini" disclosure (spec §2 requires disclosing what Gemini does).
+- [x] `frontend/app/api/analyze/route.ts` — POST route handler (server-side, key
+      never reaches the browser): JSON body of downscaled base64 photos, calls
+      `gemini-3.5-flash` with system instruction + structured-output schema
+      (theme name/one-liner/description, hex color palette, decor, florals, tags,
+      venue observations, photo_coverage verdict good/usable/poor + advice).
+- [x] Error handling per hackathon spec: missing input (400), unsupported file
+      type (400), Gemini failure (502), timeout (504, 50s cap), malformed
+      response (502). No stack traces or key material in responses.
+- [x] Client-side downscale (`frontend/lib/theme.ts`): canvas → ~1024px JPEG
+      q0.7, ≤8 photos sampled evenly across the set (Vercel 4.5MB body cap).
+- [x] Demo cache: report stored in localStorage keyed by photo-set fingerprint —
+      re-selecting the same set resolves instantly ("cached" badge); "Redesign"
+      forces a fresh call.
+- [x] Upload page integration: theme designer card on `frontend/app/page.tsx`
+      with palette swatches, coverage verdict banner, and the visible "powered
+      by Google Gemini" disclosure (spec §2).
 - [ ] Env plumbing:
   - [ ] Copy the key (manual, so it never transits tooling):
         `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`
-  - [ ] Create `frontend/.env.example` (GEMINI_API_KEY=, NEXT_PUBLIC_API_URL=) —
-        the `!.env.example` gitignore negation is already in place.
-- [ ] Preloaded example photo set (spec §7: judges need a one-click demo; include a
-      deliberately bad set that Gemini visibly rejects with advice).
+  - [x] `frontend/.env.example` created (GEMINI_API_KEY=, NEXT_PUBLIC_API_URL=).
+  - [ ] Set `GEMINI_API_KEY` in Vercel env vars (Production) — required for the
+        deployed demo.
+- [ ] Live-call verification (route error paths smoke-tested; a real Gemini call
+      needs the key in `.env.local` / Vercel).
+- [ ] (cut for time) Preloaded example photo set for one-click judging.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 
 Deployment is a hard submission requirement (spec §4.6, §9, §12) — dry-run it days
 before the deadline, not hours. Locked targets: backend → Railway, frontend → Vercel.
 
-- [ ] Railway: deploy the Axum backend (Dockerfile or Nixpacks), attach a volume
-      for the SQLite file (Railway's filesystem is ephemeral — without a volume the
-      DB resets every redeploy), respect Railway's injected `PORT`.
-- [ ] Vercel: deploy `frontend/`, set `GEMINI_API_KEY` and `NEXT_PUBLIC_API_URL`
-      (the Railway URL) in project env vars.
+- [x] Railway: backend LIVE at https://weddingai-production.up.railway.app
+      (2026-07-19; Dockerfile build pinning rust:1.88, `GET /api/health` added,
+      mock upload URL fixed to use the public domain). STILL TO DO: attach a
+      volume (mount `/data`) + set `DATABASE_URL=sqlite:///data/data.db?mode=rwc`
+      — until then the DB resets on every redeploy.
+- [ ] Vercel: frontend deployed at https://wedding-ai-omega.vercel.app but env
+      vars NOT set — set `NEXT_PUBLIC_API_URL` (the Railway URL above) and
+      `GEMINI_API_KEY`, then redeploy (NEXT_PUBLIC_* is baked at build time;
+      the live bundle currently has localhost:8080 in it).
 - [ ] Restrict the permissive CORS in `backend/src/main.rs` to the Vercel domain.
 - [ ] Verify the full flow on the public URL in an incognito browser (spec §12).
-- [ ] After the dry-run, every `git push` auto-redeploys both — no further work.
+- [x] Auto-redeploy on `git push` confirmed working (Railway and Vercel).
 
 ## 3. Submission materials (spec §9 — prepare before the form appears)
 
