@@ -1,0 +1,37 @@
+# Local Postgres for development and `cargo test`.
+#
+# The backend moved from SQLite to Postgres, and Postgres has no in-process
+# equivalent of `sqlite::memory:` — so unlike before, a fresh clone needs a
+# running database before `cargo run` or `cargo test` will work.
+#
+#   docker compose up -d
+#   cargo run          # uses weddingai
+#   cargo test         # uses weddingai_test (see TEST_DATABASE_URL in routes.rs)
+#
+# In production Railway provides Postgres; set the backend service's
+# DATABASE_URL to the reference ${{Postgres.DATABASE_URL}} (the private-network
+# URL — DATABASE_PUBLIC_URL goes through the TCP proxy and bills egress).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: weddingai-pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: weddingai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates the separate test database on first boot, so `cargo test`
+      # never shares a database with whatever you're running locally.
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

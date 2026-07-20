@@ -21,7 +21,7 @@ mod routes;
 mod state;
 mod worker_client;
 
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::postgres::PgPoolOptions;
 use state::{AppState, Config};
 use tower_http::cors::CorsLayer;
 
@@ -47,11 +47,17 @@ async fn main() {
         tracing::info!("REAL MODE enabled — jobs are submitted to RunPod");
     }
 
-    // Connect to SQLite. `?mode=rwc` = open read-write, creating the file if it's
-    // missing, so a fresh clone just works with no manual DB setup.
-    let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data.db?mode=rwc".to_string());
-    let db = SqlitePoolOptions::new()
+    // Connect to Postgres. Unlike the old SQLite file there is no "create if
+    // missing" — the database must already exist, so a fresh clone needs a
+    // reachable server (see backend/README-dev or docker-compose.yml).
+    //
+    // On Railway, set this service's DATABASE_URL to the reference
+    // `${{Postgres.DATABASE_URL}}`, which resolves to the private-network URL
+    // (postgres.railway.internal). DATABASE_PUBLIC_URL is the external proxy and
+    // bills network egress — prefer the private one for service-to-service.
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/weddingai".to_string());
+    let db = PgPoolOptions::new()
         .connect(&db_url)
         .await
         .expect("failed to connect to the database");

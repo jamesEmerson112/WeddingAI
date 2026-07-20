@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 /// The job lifecycle, in order. `failed` is reachable from any state.
@@ -24,9 +24,9 @@ pub struct Job {
     pub error_msg: Option<String>,
 }
 
-pub async fn insert_job(pool: &SqlitePool, upload_key: &str, iters: i64) -> sqlx::Result<Job> {
+pub async fn insert_job(pool: &PgPool, upload_key: &str, iters: i64) -> sqlx::Result<Job> {
     let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO jobs (id, upload_key, iters) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO jobs (id, upload_key, iters) VALUES ($1, $2, $3)")
         .bind(&id)
         .bind(upload_key)
         .bind(iters)
@@ -37,28 +37,28 @@ pub async fn insert_job(pool: &SqlitePool, upload_key: &str, iters: i64) -> sqlx
     Ok(job.expect("row we just inserted exists"))
 }
 
-pub async fn get_job(pool: &SqlitePool, id: &str) -> sqlx::Result<Option<Job>> {
-    sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE id = ?")
+pub async fn get_job(pool: &PgPool, id: &str) -> sqlx::Result<Option<Job>> {
+    sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await
 }
 
-pub async fn list_jobs(pool: &SqlitePool) -> sqlx::Result<Vec<Job>> {
+pub async fn list_jobs(pool: &PgPool) -> sqlx::Result<Vec<Job>> {
     sqlx::query_as::<_, Job>("SELECT * FROM jobs ORDER BY created_at DESC, id")
         .fetch_all(pool)
         .await
 }
 
 /// Jobs the poller still needs to move forward.
-pub async fn list_active_jobs(pool: &SqlitePool) -> sqlx::Result<Vec<Job>> {
+pub async fn list_active_jobs(pool: &PgPool) -> sqlx::Result<Vec<Job>> {
     sqlx::query_as::<_, Job>("SELECT * FROM jobs WHERE state NOT IN ('done', 'failed')")
         .fetch_all(pool)
         .await
 }
 
-pub async fn set_state(pool: &SqlitePool, id: &str, state: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE jobs SET state = ? WHERE id = ?")
+pub async fn set_state(pool: &PgPool, id: &str, state: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE jobs SET state = $1 WHERE id = $2")
         .bind(state)
         .bind(id)
         .execute(pool)
@@ -66,8 +66,8 @@ pub async fn set_state(pool: &SqlitePool, id: &str, state: &str) -> sqlx::Result
     Ok(())
 }
 
-pub async fn set_runpod_id(pool: &SqlitePool, id: &str, runpod_id: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE jobs SET runpod_id = ? WHERE id = ?")
+pub async fn set_runpod_id(pool: &PgPool, id: &str, runpod_id: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE jobs SET runpod_id = $1 WHERE id = $2")
         .bind(runpod_id)
         .bind(id)
         .execute(pool)
@@ -75,8 +75,8 @@ pub async fn set_runpod_id(pool: &SqlitePool, id: &str, runpod_id: &str) -> sqlx
     Ok(())
 }
 
-pub async fn set_done(pool: &SqlitePool, id: &str, artifacts_json: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE jobs SET state = 'done', artifacts_json = ? WHERE id = ?")
+pub async fn set_done(pool: &PgPool, id: &str, artifacts_json: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE jobs SET state = 'done', artifacts_json = $1 WHERE id = $2")
         .bind(artifacts_json)
         .bind(id)
         .execute(pool)
@@ -84,8 +84,8 @@ pub async fn set_done(pool: &SqlitePool, id: &str, artifacts_json: &str) -> sqlx
     Ok(())
 }
 
-pub async fn set_failed(pool: &SqlitePool, id: &str, error_msg: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE jobs SET state = 'failed', error_msg = ? WHERE id = ?")
+pub async fn set_failed(pool: &PgPool, id: &str, error_msg: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE jobs SET state = 'failed', error_msg = $1 WHERE id = $2")
         .bind(error_msg)
         .bind(id)
         .execute(pool)

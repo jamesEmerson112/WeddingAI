@@ -7,14 +7,33 @@ on:
 jobs:
   # ---------------------------------------------------------------------------
   # Backend: Rust / Axum. Runs the same checks you run locally before pushing.
-  # No DATABASE_URL is needed because the backend uses sqlx runtime functions
-  # (not the compile-time query! macros), so nothing here touches a database.
+  # Compiling still needs no DATABASE_URL — the backend uses sqlx runtime
+  # functions, not the compile-time query! macros. But `cargo test` now does:
+  # the DB moved from SQLite to Postgres, and Postgres has no in-process
+  # equivalent of `sqlite::memory:`, so the tests need a real server.
   # ---------------------------------------------------------------------------
   backend:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: weddingai_test
+        ports:
+          - 5432:5432
+        # Without this the job can start before Postgres accepts connections.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/weddingai_test
     steps:
       - uses: actions/checkout@v4
 

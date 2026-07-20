@@ -34,8 +34,12 @@ Backend (Rust/Axum, port 8080):
 ```bash
 cd backend
 cp .env.example .env   # mock mode works with nothing filled in
-cargo run              # first build is slow; SQLite file auto-created, migrations auto-run
-cargo test             # tests live in src/db.rs
+docker compose up -d   # REQUIRED: Postgres. Unlike the old SQLite there is no
+                       # "create if missing" — a fresh clone needs a live server.
+cargo run              # first build is slow; migrations auto-run
+cargo test             # needs Postgres too (no `sqlite::memory:` equivalent);
+                       # tests are in src/routes.rs (DB-backed) and src/db.rs
+                       # (pure next_state logic only)
 cargo test <name>      # single test
 cargo fmt --check      # CI enforces
 cargo clippy -- -D warnings   # CI enforces — warnings fail the build

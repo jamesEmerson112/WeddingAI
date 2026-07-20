@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::worker_client::WorkerClient;
 
@@ -57,13 +57,13 @@ impl Config {
 /// The one shared object every request handler receives (via axum's State).
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: PgPool,
     pub config: Arc<Config>,
     pub worker: Arc<WorkerClient>,
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool, config: Config) -> AppState {
+    pub fn new(db: PgPool, config: Config) -> AppState {
         // The ONLY place where mock-vs-real is decided. Everything downstream
         // just matches on the enum.
         let worker = if config.mock_mode {

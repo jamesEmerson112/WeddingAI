@@ -203,7 +203,7 @@ fn internal<E: std::fmt::Display>(e: E) -> ApiError {
 mod tests {
     use super::*;
     use crate::state::Config;
-    use sqlx::SqlitePool;
+    use sqlx::postgres::PgPoolOptions;
 
     // Config is built by hand rather than via from_env: mutating env vars in
     // tests is racy (tests run in parallel in one process).
@@ -217,10 +217,37 @@ mod tests {
         }
     }
 
+    /// Postgres has no in-process equivalent of `sqlite::memory:`, so these
+    /// tests need a reachable server. `docker compose up -d db` from backend/
+    /// starts one; CI provides it as a service container.
+    ///
+    /// Each test gets its own schema so parallel tests can't collide on the
+    /// same `jobs` table — the old in-memory SQLite gave that isolation for
+    /// free, and losing it silently would make these tests flaky.
     async fn test_state() -> AppState {
-        let pool = SqlitePool::connect("sqlite::memory:")
+        let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://postgres:postgres@localhost:5432/weddingai_test".to_string()
+        });
+        let schema = format!("test_{}", Uuid::new_v4().simple());
+        let pool = PgPoolOptions::new()
+            .after_connect({
+                let schema = schema.clone();
+                move |conn, _| {
+                    let schema = schema.clone();
+                    Box::pin(async move {
+                        sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+                            .execute(&mut *conn)
+                            .await?;
+                        sqlx::query(&format!("SET search_path TO {schema}"))
+                            .execute(&mut *conn)
+                            .await?;
+                        Ok(())
+                    })
+                }
+            })
+            .connect(&url)
             .await
-            .expect("in-memory sqlite always connects");
+            .expect("TEST_DATABASE_URL must point at a running Postgres");
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
