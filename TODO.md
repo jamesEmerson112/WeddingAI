@@ -58,10 +58,48 @@ build + lint green, smoke-tested on a local prod server.
 
 - [x] **LichtFeld build SUCCEEDED** — `/workspace/dist/bin/run_lichtfeld.sh` on
       the persistent volume (see CLAUDE.md Phase 0 for the two root causes).
-- [ ] Run the pipeline: shoot/convert a video → COLMAP → train → `convert` to
-      scene.html → scp down → `frontend/public/` + point a job's
-      artifacts_json at it.
+- [x] **Full pipeline PROVEN end to end on the RTX 5090** (2026-07-20, from the
+      Location-1 test run): COLMAP → train → `convert` → `scene.html` (3.3 MB).
+      Blackwell/sm_120 kernels JIT cleanly — the build's last untested
+      assumption. Three runbook fixes committed in `f2057d0`:
+      `--ImageReader.single_camera 1`, CPU matching (the GPU SIFT matcher
+      core-dumps on this pod), and `--undistort` for phone lens distortion.
+      Also: `convert` exits **134 even on success** — test for the file, not `$?`.
+- [ ] Run it on real footage: video → frames → COLMAP → train → `convert` →
+      scp down → `frontend/public/demo/scene.html`. **No backend work needed**:
+      `poller.rs:51` hardcodes `{"scene_url":"/demo/scene.html"}`, so replacing
+      that one static file makes every memory in the deployed app show the real
+      scene.
 - [ ] **TERMINATE THE POD** when done — still billing ~$1/hr.
+
+### ⛔ THE DATA BLOCKER — uploads never reach the GPU
+
+**Frames uploaded through the frontend are discarded on arrival.**
+`backend/src/routes.rs:111-120` is explicit: *"Accept the uploaded bytes, log
+how many there were, and throw them away. There is nowhere to actually store
+the data."* The upload looks completely successful — frames extract, the job
+walks to `done`, the viewer opens — but nothing is persisted and nothing is
+handed to a worker.
+
+This is why the 3D run is currently a **manual, out-of-band** process
+(`scripts/video-to-frames.sh` → `scp` → pod) rather than something the product
+does. Closing it needs three pieces, in this order:
+
+1. **Storage** (1.7 Phase 2 below) — a Railway Bucket so `mock_upload` writes
+   the zip somewhere instead of dropping it. Everything else depends on this;
+   without it there is nothing for a worker to fetch.
+2. **RunPod wiring** — `MOCK_MODE=false` plus `RUNPOD_API_KEY` and
+   `RUNPOD_ENDPOINT_ID` on the Railway backend service (names already stubbed in
+   `backend/.env.example`; the seam is `AppState::new` in `state.rs`, which is
+   the single mock-vs-real switch). **USER provides these values** — they're the
+   RunPod account key and the serverless endpoint id.
+3. **The worker itself** — `worker/handler.py` is still a stub ending in
+   `raise NotImplementedError`. It needs the real COLMAP → train → convert →
+   upload body, using the corrected flags recorded in `docs/phase0-runbook.md`.
+
+Note (2) alone does nothing: pointing the backend at RunPod without (1) just
+means the worker is handed an upload key for bytes that were never stored, and
+without (3) there is no endpoint to call. Sequence matters.
 
 ## 1.7 Storage: Postgres + volume (Phase 1 of 3 done)
 
@@ -103,6 +141,40 @@ build + lint green, smoke-tested on a local prod server.
       lower `TARGET_FRAMES`/`MAX_WIDTH` in `frames.ts` — single constants.
       Also worth testing an HEVC clip to confirm the friendly error path.
 - [ ] Shoot a 45–90s slow orbit of one room and run the pipeline on it.
+
+## 1.8 THE INTENDED PRODUCT FLOW (user, 2026-07-20) — and what's missing
+
+The flow the product is meant to have, in the user's words:
+
+> upload videos → see the photos → edit/remove unused photos → ask Gemini to
+> generate a photo with a theme for test → if not happy, choose a different
+> theme; if happy, select all photos for re-generation
+
+Measured against the build:
+
+| Step | State |
+|---|---|
+| 1. Upload video | ✅ `lib/frames.ts` extracts ~110–150 frames in-browser |
+| 2. See the photos | ⚠️ only 11 — `THUMB_LIMIT = 11` in `app/page.tsx`, the rest collapse into a `+N` tile |
+| 3. Edit / remove unused photos | ❌ **NOT BUILT** — thumbnails are display-only |
+| 4. Test-render one photo with a theme | ⚠️ built, but split across two screens |
+| 5. Try a different theme | ✅ 6 presets (`lib/themes.ts`) + Gemini design |
+| 6. Re-generate across all photos | ✅ Studio's "all" scope |
+
+- [ ] **Step 3 is the gap, and step 2 blocks it** — you cannot curate what you
+      cannot see. Needs: show every frame (virtualised or paged, 151 thumbnails
+      is a lot of DOM), per-photo remove, select-all/none, and a running count.
+      `applyImages()` in `app/page.tsx` is the seam — it already owns `files` +
+      `thumbs`, so removal is a filter on both plus an `URL.revokeObjectURL`.
+- [ ] **Curation also improves reconstruction.** Motion-blurred frames are the
+      documented #1 cause of COLMAP registration failure, so letting a user drop
+      bad frames helps the 3D path as much as the Gemini path. Worth a cheap
+      automatic blur score (variance of Laplacian on the thumbnail canvas) to
+      pre-flag likely-bad frames rather than making the user hunt for them.
+- [ ] **Steps 4-6 are split across two screens**: the test render lives on the
+      upload page, "re-generate all" lives in `/studio` after a job exists. The
+      user's flow describes one continuous loop, so either move the test render
+      into Studio or bring scope-all forward into upload.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 
