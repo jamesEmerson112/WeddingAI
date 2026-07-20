@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
+import { Cormorant_Garamond, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import AppShell from "@/components/AppShell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,9 +13,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Display serif for headings and the wordmark (see WeddingAI-Prototype.html).
+const cormorant = Cormorant_Garamond({
+  variable: "--font-cormorant",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  style: ["normal", "italic"],
+});
+
 export const metadata: Metadata = {
-  title: "splat-service",
-  description: "Turn photos into a 3D Gaussian splat",
+  title: "WeddingAI",
+  description:
+    "Your wedding photos, rebuilt as a walkable 3D memory — styled by Gemini.",
 };
 
 export default function RootLayout({
@@ -26,26 +35,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${cormorant.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        {/* Small top nav shown on every page. */}
-        <nav className="flex items-center gap-6 border-b border-zinc-200 px-6 py-3 dark:border-zinc-800">
-          <Link href="/" className="font-semibold">
-            splat-service
-          </Link>
-          <div className="flex gap-4 text-sm text-zinc-600 dark:text-zinc-400">
-            <Link href="/" className="hover:text-black dark:hover:text-white">
-              Upload
-            </Link>
-            <Link
-              href="/jobs"
-              className="hover:text-black dark:hover:text-white"
-            >
-              Jobs
-            </Link>
-          </div>
-        </nav>
+      <body className="flex min-h-full flex-col">
+        <AppShell />
         {children}
       </body>
     </html>

@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
+/*
+ * WeddingAI palette + motion, lifted from WeddingAI-Prototype.html.
+ * The design is light-only: warm cream surfaces, terracotta accents.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f1e9;
+  --foreground: #241d19;
 }
 
 @theme inline {
@@ -10,17 +15,80 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
+  --font-serif: var(--font-cormorant);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Surfaces */
+  --color-cream: #f7f1e9;
+  --color-paper: #fffefb;
+  --color-card: #fbf6ef;
+  --color-sand: #e7e0d4;
+
+  /* Ink & muted text (dark → light) */
+  --color-ink: #241d19;
+  --color-clay: #5a4f48;
+  --color-taupe: #6b6058;
+  --color-mocha: #8c8078;
+  --color-fawn: #9c9088;
+  --color-sandstone: #b4a89d;
+  --color-dune: #d9c7ba;
+
+  /* Terracotta accent */
+  --color-terra: #a04a45;
+  --color-terra-dark: #8f3d38;
+  --color-blush: #f3e7e3;
+
+  /* Sage (success / "ready") */
+  --color-sage: #5f6f4e;
+  --color-sage-dark: #50603f;
+  --color-sage-soft: #8ba07a;
+  --color-sage-wash: #e7ecdf;
+  --color-sage-ink: #41502f;
+
+  /* Amber (in-progress pill) */
+  --color-amber-wash: #f3e6cf;
+  --color-amber-ink: #8a6a2a;
+
+  /* Motion */
+  --animate-pulse-dot: pulseDot 1.4s ease-in-out infinite;
+  --animate-shimmer-x: shimmerX 2.2s linear infinite;
+  --animate-float-y: floatY 4s ease-in-out infinite;
+  --animate-spin-ring: spinRing 0.8s linear infinite;
+
+  @keyframes pulseDot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+  @keyframes shimmerX {
+    0% {
+      background-position: -500px 0;
+    }
+    100% {
+      background-position: 500px 0;
+    }
+  }
+  @keyframes floatY {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-7px);
+    }
+  }
+  @keyframes spinRing {
+    to {
+      transform: rotate(360deg);
+    }
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }

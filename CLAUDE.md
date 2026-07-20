@@ -146,19 +146,46 @@ VRAM, no multi-GPU.
   → Opus adversarial verifiers; 8 raw findings, 1 confirmed) caught a real
   race — in-flight Gemini responses landing on a swapped photo set — fixed via
   a `requestSeq` ref guard in `page.tsx`.
-- **Demo seeds DONE (~20:56 UTC): 4 jobs in state `done` on the live backend**
-  (ids b9519ad8…, 36bae690…, 6af675f0…, canary 27669f78…), each opens the
-  placeholder viewer. Observed: Railway did NOT rebuild for the frontend-only
-  push `6850bf1` (likely a backend/ watch path), so frontend-only pushes seem
-  DB-safe — but keep the conservative rule anyway:
+- **Demo seeds: 3 `done` jobs live** (60ebff58…, 7f3bee9f…, 2edbfa03…, re-seeded
+  ~21:15 UTC after the docs push `40639bf` DID wipe the Railway DB — so even
+  docs-only pushes can trigger a rebuild; always verify + reseed after ANY push
+  via the session seed script).
 - **Push freeze LIFTED (user call, ~21:05 UTC)** — pushes are fine anytime:
   both platforms deploy zero-downtime, so the demo link never goes dark. Only
   consequence of a backend-touching push is a Railway DB wipe → re-run the
   seed script (`scratchpad/seed-demo-jobs.sh` of session 6de23d68, ~30s) and
   the 4 demo scenes are back.
-- **NEXT PHASE (user, ~20:53 UTC): implement the UI mockup on the frontend**
-  (mockup source/details to be specified by the user post-compact), then the
-  afternoon image→3D run for the end-of-day complete submission.
+- **UI MOCKUP REWORK IN PROGRESS (~21:45 UTC, uncommitted on disk)** — source
+  design: `WeddingAI-Prototype.html` at repo root (bundled artifact; extracted
+  markup at scratchpad `prototype-extracted.html`, session 6de23d68). Approved
+  plan: `/Users/mrbam/.claude/plans/unified-crunching-gadget.md`. User
+  decisions: all 5 screens; responsive (not fixed-width); demo flow = upload
+  photos → pick a PRE-WRITTEN theme (6 authored in `frontend/lib/themes.ts`) →
+  photos generated to match; photo-analysis stays as secondary path; Studio
+  "All out" mode REALLY loops /api/render over all session photos.
+  **DONE (build+lint green)**: `globals.css` (warm tokens: cream/paper/ink/
+  terra/sage etc. + mockup keyframes pulseDot/shimmerX/floatY/spinRing, light-
+  only), `layout.tsx` (+Cormorant Garamond via next/font, WeddingAI metadata),
+  `components/AppShell.tsx` (New/Memories/Studio nav pills), `lib/themes.ts`
+  (6 preset themes as full ThemeReport objects), `lib/memory.ts` (jobId→title/
+  gradient + localStorage meta), `lib/theme.ts` (+downscaleSet, sessionStorage
+  scene handoff saveSessionScene/loadSessionScene/sessionSceneSnapshot,
+  renderOne), `app/page.tsx` (Upload: preset chips + "design from photos" +
+  thumbnails; saves scene handoff + memory meta at create), `app/studio/
+  page.tsx` (NEW: scope one/all, mood chips, editable prompt, sequential real
+  render loop w/ progress + per-photo error tiles; useSyncExternalStore for
+  sessionStorage — lint forbids setState-in-effect),
+  `app/jobs/[id]/page.tsx` (Processing screen — written by a subagent, NOT
+  yet verified by me).
+  **STILL TO DO**: `app/jobs/page.tsx` (Memories card grid — still old table)
+  and `app/viewer/[id]/page.tsx` (viewer overlay chrome: ‹ Memories, serif
+  title, Share-copies-URL, ✦ Reimagine in Studio → /studio, orbit-hint pill,
+  pointer-events-none wrapper pattern) — spec in plan file §"Screens" 3+4;
+  then npm run build && lint, local walkthrough, push, RESEED (a push earlier
+  today wiped the DB: seeds now 3 done jobs 60ebff58…, 7f3bee9f…, 2edbfa03…).
+  A helper subagent doing jobs list+viewer DIED on the monthly spend limit
+  (user raised it $10; limit may bite again — prefer solo coding, no agents).
+- Then: the afternoon image→3D run for the end-of-day complete submission.
 - CORS still permissive — restrict to the Vercel domain before judging.
 - **PRODUCT DEFINITION (user's words, 2026-07-19 ~20:45 UTC)**: "use the
   generated images then get processed into a 3D with LichtFeld" — i.e. Gemini
@@ -191,7 +218,9 @@ A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
 - **Build running**: `/workspace/phase0_build.sh` (runbook steps 2–4) in tmux
   session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones
   (check: `grep -E "^=== " /workspace/build.log | tail`). Started 19:36 UTC;
-  as of 20:15 UTC STILL in the vcpkg dependency phase (configure started 19:44).
+  as of 21:11 UTC still in vcpkg deps (61 ports done, python3 in flight, active
+  CPU — healthy, not stuck; ETA for finished dist/bin ≈ 22:00–23:30 UTC, fine
+  for the afternoon run).
   **DEADLINE CORRECTION (user, ~20:48 UTC): 2:30 PM PT is only the IN-PERSON
   demo; the complete submission is due END OF DAY.** So: the 2:30 demo ships on
   the mock pipeline, and the REAL run happens this afternoon — **KEEP THE POD

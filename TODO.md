@@ -34,11 +34,24 @@ venue. Model pinned: `gemini-3.5-flash`.
       key swap; NO code change. Also blocks the image→3D pipeline run.
 - [ ] (cut for time) Preloaded example photo set for one-click judging.
 
-## 1.5 UI mockup implementation (NEXT — user request ~20:53 UTC)
+## 1.5 UI mockup implementation (BUILT ~21:55 UTC — push after the 2:30 demo)
 
-- [ ] Implement the UI mockup on the frontend. Mockup source/scope to be
-      provided by the user (post-compact); no pushes before the 2:30 PM
-      in-person demo — build locally, ship after.
+Source: `WeddingAI-Prototype.html` (repo root). All five screens implemented,
+build + lint green, smoke-tested on a local prod server.
+
+- [x] Design tokens + fonts + AppShell nav (globals.css, layout.tsx,
+      components/AppShell.tsx)
+- [x] Upload "Create a memory": preset theme chips (lib/themes.ts, 6 authored
+      themes) + Gemini design-from-photos path, photo thumbnails, session
+      handoff to Studio
+- [x] Processing "Rebuilding your day": vertical stepper + progress bar +
+      shimmer preview panel
+- [x] Memories gallery: card grid, deterministic titles/gradients (lib/memory.ts)
+- [x] Viewer chrome: back/Share/orbit-hint overlays, ✦ Reimagine in Studio
+- [x] Studio (/studio): scope one/all, mood chips, editable prompt, REAL
+      sequential /api/render loop with progress + per-photo error tiles
+- [ ] PUSH after the in-person demo wraps (user chose: demo runs on the old
+      deployed UI) → verify Vercel deploy → reseed demo jobs if Railway wiped
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 
