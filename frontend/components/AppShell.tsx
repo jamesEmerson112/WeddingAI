@@ -24,24 +24,26 @@ export default function AppShell() {
   const active = section(usePathname());
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-ink/10 bg-paper px-5 sm:px-8">
-      <div className="flex items-center gap-4 sm:gap-8">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-ink/10 bg-paper px-4 sm:px-8">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-8">
         <Link
           href="/"
-          className="flex items-center gap-2.5 font-serif text-2xl font-bold tracking-tight text-ink"
+          className="flex shrink-0 items-center gap-2.5 font-serif text-xl font-bold tracking-tight text-ink sm:text-2xl"
         >
           <span className="inline-block size-[11px] rounded-full bg-terra" />
-          WeddingAI
+          {/* The wordmark alone costs ~120px — the dot carries the brand on
+              phones so the nav pills don't push the page into overflow. */}
+          <span className="hidden xs:inline">WeddingAI</span>
         </Link>
-        <nav className="flex items-center gap-1.5">
+        <nav className="flex min-w-0 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-1.5 [&::-webkit-scrollbar]:hidden">
           {LINKS.map((l) => (
             <Link
               key={l.key}
               href={l.href}
               className={
                 active === l.key
-                  ? "rounded-full bg-ink px-4 py-2 text-[13.5px] font-semibold text-cream"
-                  : "rounded-full px-4 py-2 text-[13.5px] font-medium text-taupe transition-colors hover:bg-ink/5"
+                  ? "shrink-0 rounded-full bg-ink px-3 py-2 text-[13px] font-semibold text-cream sm:px-4 sm:text-[13.5px]"
+                  : "shrink-0 rounded-full px-3 py-2 text-[13px] font-medium text-taupe transition-colors hover:bg-ink/5 sm:px-4 sm:text-[13.5px]"
               }
             >
               {l.label}

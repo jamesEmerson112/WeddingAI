@@ -16,7 +16,10 @@ function pill(state: string): { label: string; cls: string } {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
+  // SQLite's datetime('now') is UTC but formatted "YYYY-MM-DD HH:MM:SS" —
+  // V8 parses that as LOCAL time, which shows tomorrow's date all evening in
+  // western timezones. Normalize to explicit UTC first.
+  const d = new Date(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(iso) ? `${iso.replace(" ", "T")}Z` : iso);
   return isNaN(d.getTime())
     ? iso
     : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });

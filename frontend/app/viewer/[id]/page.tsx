@@ -66,14 +66,16 @@ export default function ViewerPage() {
       {/* Overlay chrome. The wrappers ignore the pointer so orbit-dragging the
           iframe still works everywhere except the actual controls. */}
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/40 to-transparent px-4 py-4 sm:px-6">
-        <div className="flex items-center gap-3.5">
+        <div className="flex min-w-0 items-center gap-3.5">
           <Link
             href="/jobs"
             className="pointer-events-auto rounded-lg bg-white/15 px-3.5 py-2 text-[13px] font-medium text-white backdrop-blur transition-colors hover:bg-white/25"
           >
             ‹&nbsp; Memories
           </Link>
-          <div className="font-serif text-xl font-semibold text-white">
+          {/* min-w-0 lets the flex child shrink so truncate can engage — a
+              wrapped title would collide with the Studio CTA below. */}
+          <div className="min-w-0 truncate font-serif text-xl font-semibold text-white">
             {memoryTitle(id)}
           </div>
         </div>
@@ -87,7 +89,7 @@ export default function ViewerPage() {
 
       <div className="pointer-events-none absolute top-[70px] right-4 sm:right-6">
         <Link
-          href="/studio"
+          href={`/studio?from=${id}`}
           className="pointer-events-auto flex items-center gap-1.5 rounded-lg bg-terra px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-lg transition-colors hover:bg-terra-dark"
         >
           ✦ Reimagine in Studio

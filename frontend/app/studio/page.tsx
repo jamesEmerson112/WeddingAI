@@ -2,8 +2,17 @@
 /* eslint-disable @next/next/no-img-element -- all images here are data: URLs
    from our own Gemini route or the session handoff; next/image can't help. */
 
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   renderOne,
   sessionSceneSnapshot,
@@ -12,6 +21,7 @@ import {
   type ThemeReport,
 } from "@/lib/theme";
 import { PRESET_THEMES } from "@/lib/themes";
+import { memoryMeta, memoryTitle } from "@/lib/memory";
 
 type Scope = "one" | "all";
 
@@ -30,12 +40,30 @@ function dataUrl(p: ScenePhoto): string {
 // snapshot (null on the server) and parse it once per change.
 const noopSubscribe = () => () => {};
 
+// useSearchParams needs a Suspense boundary in a prerendered route.
 export default function StudioPage() {
-  const sceneRaw = useSyncExternalStore(
-    noopSubscribe,
-    sessionSceneSnapshot,
-    () => null,
+  return (
+    <Suspense fallback={<StudioLoading />}>
+      <Studio />
+    </Suspense>
   );
+}
+
+function StudioLoading() {
+  return (
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="animate-spin-ring mb-4 size-9 rounded-full border-[3px] border-ink/15 border-t-terra" />
+      <p className="text-sm text-mocha">Opening Studio…</p>
+    </main>
+  );
+}
+
+function Studio() {
+  // ?from=<jobId> when opened from a viewer: load THAT memory's photos rather
+  // than whatever the last upload happened to leave behind.
+  const fromId = useSearchParams().get("from");
+  const getSnapshot = useCallback(() => sessionSceneSnapshot(fromId), [fromId]);
+  const sceneRaw = useSyncExternalStore(noopSubscribe, getSnapshot, () => null);
   const scene = useMemo<SessionScene | null>(() => {
     if (!sceneRaw) return null;
     try {
@@ -44,6 +72,15 @@ export default function StudioPage() {
       return null;
     }
   }, [sceneRaw]);
+
+  // The server snapshot is always null, so the first client paint would show
+  // the empty state before sessionStorage is read. Gate on hydration so a
+  // refresh shows a neutral loader instead of a false "nothing here".
+  const hydrated = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
 
   const [scope, setScope] = useState<Scope>("one");
   // Theme + description are DERIVED from the picked chip (or the upload
@@ -64,8 +101,22 @@ export default function StudioPage() {
   const midIndex = Math.floor(photos.length / 2);
   const targets = scope === "one" ? (photos.length ? [photos[midIndex]] : []) : photos;
 
+  // Cancel any in-flight render sequence when the component goes away, so
+  // navigating off Studio doesn't keep spending Gemini calls in the dark.
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    // Reading .current at cleanup time is the point here — we want whatever
+    // sequence/controller is live when the user navigates away.
+    return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      requestSeq.current++;
+      abort.current?.abort();
+    };
+  }, []);
+
   function invalidate() {
     requestSeq.current++;
+    abort.current?.abort();
     setBusy(false);
     setResults([]);
   }
@@ -91,6 +142,8 @@ export default function StudioPage() {
       ...report,
       description: desc.trim() || report.description,
     };
+    const controller = new AbortController();
+    abort.current = controller;
     setBusy(true);
     setResults(targets.map(() => ({ status: "waiting" })));
 
@@ -100,7 +153,7 @@ export default function StudioPage() {
         prev.map((r, j) => (j === i ? { status: "generating" } : r)),
       );
       try {
-        const image = await renderOne(targets[i], themed);
+        const image = await renderOne(targets[i], themed, controller.signal);
         if (requestSeq.current !== myReq) return;
         setResults((prev) =>
           prev.map((r, j) => (j === i ? { status: "done", image } : r)),
@@ -126,19 +179,28 @@ export default function StudioPage() {
       ? "✦ Generate preview"
       : "✦ Transform gallery";
 
-  // ---- Empty state: Studio needs the photos from an upload this session ----
+  // Pre-hydration: sessionStorage hasn't been read yet, so claiming there's
+  // nothing here would be a lie on a refresh.
+  if (!hydrated) return <StudioLoading />;
+
+  // ---- Empty state: no photos stored for the memory we were asked about ----
   if (photos.length === 0) {
+    // Was this memory created in this browser at all? If so its photos were
+    // dropped (storage full, or a different tab/session) — say so plainly
+    // rather than implying the user never uploaded anything.
+    const known = fromId ? memoryMeta(fromId) : null;
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center px-6 py-16 text-center">
         <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-blush text-2xl">
           ✦
         </div>
         <h1 className="font-serif text-3xl font-semibold text-ink">
-          Nothing to restyle yet
+          {known ? "Photos aren't available here" : "Nothing to restyle yet"}
         </h1>
         <p className="mt-3 max-w-md text-[15px] leading-relaxed text-taupe">
-          Studio works with the photos from your latest upload. Create a memory
-          first, then come back to reimagine it in a new mood.
+          {known
+            ? `Studio keeps the photos from the memory you created in this browser tab. “${memoryTitle(fromId!)}” isn't the one it's holding — reopen it from a new upload to restyle these exact photos.`
+            : "Studio works with the photos from your latest upload. Create a memory first, then come back to reimagine it in a new mood."}
         </p>
         <Link
           href="/"

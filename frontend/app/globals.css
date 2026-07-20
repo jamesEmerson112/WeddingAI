@@ -11,6 +11,10 @@
 }
 
 @theme inline {
+  /* Phone breakpoint: below this the header drops its wordmark, which would
+     otherwise squeeze the nav pills off the edge. */
+  --breakpoint-xs: 30rem;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);

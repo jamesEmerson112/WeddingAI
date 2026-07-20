@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { JOB_STATES } from "@/lib/api";
@@ -27,10 +28,20 @@ export default function JobStatusPage() {
   // Where the job sits in the ordered state machine. `indexOf` returns -1 for
   // `failed` (which isn't in JOB_STATES) — the failed banner below covers that
   // case instead of the stepper trying to represent it.
-  const currentIndex = job
+  const stateIndex = job
     ? (JOB_STATES as readonly string[]).indexOf(job.state)
     : -1;
   const isDone = job?.state === "done";
+  const failed = job?.state === "failed";
+
+  // Remember how far the job got: on failure the state leaves the ordered
+  // list, and without this the stepper would snap back to 0% and hide the
+  // steps that actually completed. (Adjusting state during render — the
+  // React-sanctioned way to derive from changing props.)
+  const [reached, setReached] = useState(-1);
+  if (stateIndex > reached) setReached(stateIndex);
+
+  const currentIndex = failed ? reached : stateIndex;
   const progress = (Math.max(currentIndex, 0) / (JOB_STATES.length - 1)) * 100;
 
   return (
@@ -65,6 +76,7 @@ export default function JobStatusPage() {
                 const meta = STEP_META[state];
                 const completed = i < currentIndex || isDone;
                 const current = i === currentIndex && !isDone;
+                const stalled = failed && current;
                 const last = i === JOB_STATES.length - 1;
                 return (
                   <li key={state} className="flex gap-4">
@@ -73,12 +85,14 @@ export default function JobStatusPage() {
                         className={`flex h-[30px] w-[30px] items-center justify-center rounded-full text-[13px] font-semibold ${
                           completed
                             ? "bg-sage text-white"
-                            : current
-                              ? "animate-pulse-dot bg-terra text-white"
-                              : "bg-[#efe7dc] text-sandstone"
+                            : stalled
+                              ? "bg-red-600 text-white"
+                              : current
+                                ? "animate-pulse-dot bg-terra text-white"
+                                : "bg-[#efe7dc] text-sandstone"
                         }`}
                       >
-                        {completed ? "✓" : i + 1}
+                        {completed ? "✓" : stalled ? "!" : i + 1}
                       </div>
                       {!last && (
                         <div

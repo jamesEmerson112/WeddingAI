@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import JSZip from "jszip";
 import { createUpload, putZip, createJob } from "@/lib/api";
@@ -45,11 +45,10 @@ export default function UploadPage() {
   // reads inside the async closure would be stale by resolve time.
   const requestSeq = useRef(0);
 
-  // Object URLs for the thumbnail grid, revoked when the set changes.
-  const thumbs = useMemo(
-    () => files.slice(0, THUMB_LIMIT).map((f) => URL.createObjectURL(f)),
-    [files],
-  );
+  // Object URLs for the thumbnail grid. Minted in the event handler that
+  // changes the photo set — not in a memo, whose factory Strict Mode
+  // double-invokes, orphaning a batch of blob URLs nothing can revoke.
+  const [thumbs, setThumbs] = useState<string[]>([]);
   useEffect(() => {
     return () => thumbs.forEach((u) => URL.revokeObjectURL(u));
   }, [thumbs]);
@@ -58,11 +57,15 @@ export default function UploadPage() {
   const busy = stage === "zipping" || stage === "uploading" || stage === "creating";
   const goodOverlap = files.length >= 24;
 
-  // Keep only image files from a dropped or picked selection.
+  // Keep only image files from a dropped or picked selection. Ignored while a
+  // memory is being created: that flow captured the old set, so swapping the
+  // visible photos now would show a set the job isn't actually using.
   function addFiles(list: FileList | null) {
-    if (!list) return;
+    if (!list || busy) return;
     const images = Array.from(list).filter((f) => f.type.startsWith("image/"));
     setFiles(images);
+    thumbs.forEach((u) => URL.revokeObjectURL(u));
+    setThumbs(images.slice(0, THUMB_LIMIT).map((f) => URL.createObjectURL(f)));
     requestSeq.current++;
     setThemeError(null);
     setThemeCached(false);
@@ -85,7 +88,9 @@ export default function UploadPage() {
   // localStorage cache inside analyzePhotos and resolves instantly.
   async function designTheme() {
     if (files.length === 0 || themeBusy) return;
-    const myReq = requestSeq.current;
+    // Own the generation (like Studio's generate) so two overlapping analyses
+    // can never share one and both paint.
+    const myReq = ++requestSeq.current;
     setThemeError(null);
     setThemeBusy(true);
     try {
@@ -99,7 +104,8 @@ export default function UploadPage() {
       if (requestSeq.current !== myReq) return;
       setThemeError(e instanceof Error ? e.message : String(e));
     } finally {
-      setThemeBusy(false);
+      // A superseded call must not clear a newer call's busy flag.
+      if (requestSeq.current === myReq) setThemeBusy(false);
     }
   }
 
@@ -130,14 +136,19 @@ export default function UploadPage() {
       setStage("creating");
       const job = await createJob(upload_key, DEFAULT_ITERS);
 
+      // Hand this memory's photos to Studio, keyed by job id so Studio can
+      // tell whose photos it holds. Records whether the handoff fit in
+      // storage, so Studio can explain itself instead of looking empty.
+      const stored = saveSessionScene(job.id, {
+        photos: await scenePromise,
+        report: selection?.report ?? null,
+      });
+
       // Client-side metadata so the gallery and Studio know this memory.
       saveMemoryMeta(job.id, {
         themeName: selection?.report.theme_name,
         photoCount: files.length,
-      });
-      saveSessionScene({
-        photos: await scenePromise,
-        report: selection?.report ?? null,
+        studioReady: stored,
       });
 
       router.push(`/jobs/${job.id}`);

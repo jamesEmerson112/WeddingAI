@@ -33,6 +33,9 @@ const META_PREFIX = "weddingai:memory:";
 export type MemoryMeta = {
   themeName?: string;
   photoCount?: number;
+  // False when the Studio photo handoff didn't fit in sessionStorage, so
+  // Studio can say so rather than looking like nothing was ever uploaded.
+  studioReady?: boolean;
 };
 
 function hash(id: string): number {

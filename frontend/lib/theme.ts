@@ -32,7 +32,7 @@ const MAX_PHOTOS = 8;
 const TARGET_EDGE = 1024;
 const JPEG_QUALITY = 0.7;
 const CACHE_PREFIX = "weddingai:theme:";
-const SESSION_KEY = "weddingai:scene";
+const SESSION_PREFIX = "weddingai:scene:";
 
 // A stable id for a photo set: same files selected again → same key → cache
 // hit. Name+size+mtime is plenty for a demo cache; no need to hash pixels.
@@ -80,30 +80,37 @@ export async function downscaleSet(files: File[]): Promise<ScenePhoto[]> {
   return images.filter((img): img is ScenePhoto => img !== null);
 }
 
-// ---- Upload → Studio handoff (sessionStorage; ~1MB, well under quota) ----
+// ---- Upload → Studio handoff (sessionStorage, keyed by job id) ----
+// Only ONE scene is kept at a time: older handoffs are pruned on save so the
+// ~5MB quota can't accumulate across uploads, and Studio can tell "this
+// memory's photos" apart from "some other memory's photos".
 
-export function saveSessionScene(scene: SessionScene): void {
+export function saveSessionScene(id: string, scene: SessionScene): boolean {
   try {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(scene));
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(SESSION_PREFIX)) sessionStorage.removeItem(k);
+    }
+    sessionStorage.setItem(SESSION_PREFIX + id, JSON.stringify(scene));
+    return true;
   } catch {
-    // Best effort — Studio shows its empty state if the handoff is missing.
+    // Quota exceeded or storage blocked — Studio shows its "photos not
+    // available in this browser" state, which is at least accurate.
+    return false;
   }
 }
 
-export function loadSessionScene(): SessionScene | null {
+// Raw-string snapshot for useSyncExternalStore (string primitives compare by
+// value, so the reference is stable enough for Object.is). Returns null on
+// the server. With no id, returns the single stored scene (latest upload).
+export function sessionSceneSnapshot(id?: string | null): string | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as SessionScene) : null;
-  } catch {
+    if (id) return sessionStorage.getItem(SESSION_PREFIX + id);
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(SESSION_PREFIX)) return sessionStorage.getItem(k);
+    }
     return null;
-  }
-}
-
-// Raw-string snapshot for useSyncExternalStore (stable reference — parsing
-// happens behind useMemo on the caller's side). Returns null on the server.
-export function sessionSceneSnapshot(): string | null {
-  try {
-    return sessionStorage.getItem(SESSION_KEY);
   } catch {
     return null;
   }
@@ -155,9 +162,11 @@ export async function analyzePhotos(
 export async function renderOne(
   image: ScenePhoto,
   report: ThemeReport,
+  signal?: AbortSignal,
 ): Promise<string> {
   const res = await fetch("/api/render", {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       theme: {
