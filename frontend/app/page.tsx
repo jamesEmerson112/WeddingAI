@@ -7,6 +7,7 @@ import { createUpload, putZip, createJob } from "@/lib/api";
 import {
   analyzePhotos,
   downscaleSet,
+  renderTheme,
   saveSessionScene,
   type ThemeReport,
 } from "@/lib/theme";
@@ -19,6 +20,7 @@ import {
   loadSampleSets,
   type SampleSet,
 } from "@/lib/samples";
+import FrameGallery from "@/components/FrameGallery";
 
 // How many training iterations to request for a new job. 7000 is a reasonable
 // default for a quick splat; the backend accepts this as the `iters` field.
@@ -31,9 +33,6 @@ type Stage = "idle" | "zipping" | "uploading" | "creating" | "error";
 // from the photos — both shapes are a full ThemeReport.
 type Selection = { source: "preset" | "gemini"; report: ThemeReport };
 
-// How many photo thumbnails to show before collapsing into a "+N" tile.
-const THUMB_LIMIT = 11;
-
 export default function UploadPage() {
   const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
@@ -45,6 +44,20 @@ export default function UploadPage() {
   const [themeBusy, setThemeBusy] = useState(false);
   const [themeCached, setThemeCached] = useState(false);
   const [themeError, setThemeError] = useState<string | null>(null);
+
+  // "Visualize theme" — a data: URL for the source photo Gemini restyled and
+  // one for the result, so a before/after can render side by side. Data URLs
+  // (not object URLs) so there's no blob lifetime to manage or leak.
+  const [renderSource, setRenderSource] = useState<string | null>(null);
+  const [renderResult, setRenderResult] = useState<string | null>(null);
+  const [renderBusy, setRenderBusy] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  // True only for a photo set adopted verbatim from a published sample —
+  // these are too few photos to pass the organic-upload overlap heuristic
+  // below, but they're a known, curated set rather than an ad hoc pick.
+  // NOT a claim that any set has been confirmed to reconstruct cleanly.
+  const [isSample, setIsSample] = useState(false);
 
   // Bumped whenever the photo selection (or an explicit theme pick) changes.
   // Async Gemini responses check it before painting, so a slow reply for an
@@ -59,6 +72,12 @@ export default function UploadPage() {
   useEffect(() => {
     return () => thumbs.forEach((u) => URL.revokeObjectURL(u));
   }, [thumbs]);
+
+  // Seconds into the source video for each entry in `thumbs`, index-aligned.
+  // Null when the current photo set isn't video-derived (dropped photos, or
+  // a sample set) — FrameGallery uses this to decide whether to show a
+  // timestamp under each frame in the lightbox.
+  const [frameTimestamps, setFrameTimestamps] = useState<number[] | null>(null);
 
   // Video → frames progress, null when no extraction is running.
   const [extracting, setExtracting] = useState<{ done: number; total: number } | null>(
@@ -80,6 +99,12 @@ export default function UploadPage() {
   const sampleAbort = useRef<AbortController | null>(null);
   useEffect(() => () => sampleAbort.current?.abort(), []);
 
+  // Aborts a superseded /api/render call — otherwise a stale request keeps
+  // running (and buffering a multi-MB base64 image response) server- and
+  // client-side even after requestSeq has moved on and its result is discarded.
+  const renderAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => renderAbort.current?.abort(), []);
+
   const totalMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
   const busy =
     stage === "zipping" ||
@@ -88,13 +113,21 @@ export default function UploadPage() {
     extracting !== null ||
     sampleBusy !== null;
   const goodOverlap = files.length >= 24;
+  // Three honest states: the count heuristic actually passed, this is a
+  // curated sample set (no quality claim — just "curated", not "ad hoc"),
+  // or neither — in which case the count heuristic's warning stands.
+  const overlapState: "good" | "sample" | "low" = goodOverlap
+    ? "good"
+    : isSample
+      ? "sample"
+      : "low";
 
   // Adopt a new photo set. The [thumbs] effect above revokes the previous
   // batch's object URLs when this replaces them, so there's nothing to free
   // here.
   function applyImages(images: File[]) {
     setFiles(images);
-    setThumbs(images.slice(0, THUMB_LIMIT).map((f) => URL.createObjectURL(f)));
+    setThumbs(images.map((f) => URL.createObjectURL(f)));
   }
 
   // Accept either a photo set or a single walkthrough video — a video is
@@ -112,6 +145,14 @@ export default function UploadPage() {
     setThemeError(null);
     setThemeCached(false);
     setError(null);
+    setIsSample(false);
+    // A stale render was of the old photo set (or a superseded request would
+    // otherwise leave the button stuck on "Rendering…" forever, since the
+    // requestSeq guard in its `finally` deliberately skips clearing busy).
+    setRenderError(null);
+    setRenderResult(null);
+    setRenderSource(null);
+    setRenderBusy(false);
     // A preset theme survives a photo swap; a Gemini-designed one was about
     // THOSE photos and no longer applies.
     setSelection((sel) => (sel?.source === "gemini" ? null : sel));
@@ -119,6 +160,7 @@ export default function UploadPage() {
     const video = picked.find(isVideoFile);
     if (!video) {
       applyImages(picked.filter((f) => f.type.startsWith("image/")));
+      setFrameTimestamps(null);
       return;
     }
 
@@ -129,7 +171,7 @@ export default function UploadPage() {
     applyImages([]);
     setExtracting({ done: 0, total: 0 });
     try {
-      const frames = await extractFrames(video, {
+      const { frames, timestamps } = await extractFrames(video, {
         signal: controller.signal,
         onProgress: (done, total) => {
           if (requestSeq.current === myReq) setExtracting({ done, total });
@@ -137,6 +179,7 @@ export default function UploadPage() {
       });
       if (requestSeq.current !== myReq) return;
       applyImages(frames);
+      setFrameTimestamps(timestamps);
     } catch (e) {
       // A supersede or unmount aborts on purpose — not worth an error banner.
       if (requestSeq.current !== myReq || (e as Error)?.name === "AbortError") return;
@@ -166,7 +209,14 @@ export default function UploadPage() {
     setThemeError(null);
     setThemeCached(false);
     setError(null);
+    setIsSample(false);
+    setRenderError(null);
+    setRenderResult(null);
+    setRenderSource(null);
+    setRenderBusy(false);
     setSelection((sel) => (sel?.source === "gemini" ? null : sel));
+    // A sample set is never video-derived, so it has no per-frame timestamps.
+    setFrameTimestamps(null);
 
     sampleAbort.current?.abort();
     const controller = new AbortController();
@@ -178,6 +228,7 @@ export default function UploadPage() {
       const loaded = await fetchSampleFiles(set, { signal: controller.signal });
       if (requestSeq.current !== myReq) return;
       applyImages(loaded);
+      setIsSample(true);
     } catch (e) {
       if (requestSeq.current !== myReq || (e as Error)?.name === "AbortError") return;
       setError(e instanceof Error ? e.message : String(e));
@@ -192,6 +243,11 @@ export default function UploadPage() {
     setThemeBusy(false);
     setThemeError(null);
     setThemeCached(false);
+    // A render in progress (or already shown) was of the old theme.
+    setRenderBusy(false);
+    setRenderError(null);
+    setRenderResult(null);
+    setRenderSource(null);
     setSelection({ source: "preset", report });
   }
 
@@ -205,6 +261,13 @@ export default function UploadPage() {
     const myReq = ++requestSeq.current;
     setThemeError(null);
     setThemeBusy(true);
+    // A render in progress (or already shown) was of the old theme — reset
+    // this unconditionally (not just on success) so a failed redesign can't
+    // strand "Visualize theme" stuck reading "Rendering…" forever.
+    setRenderBusy(false);
+    setRenderError(null);
+    setRenderResult(null);
+    setRenderSource(null);
     try {
       const result = await analyzePhotos(files, {
         force: selection?.source === "gemini",
@@ -218,6 +281,35 @@ export default function UploadPage() {
     } finally {
       // A superseded call must not clear a newer call's busy flag.
       if (requestSeq.current === myReq) setThemeBusy(false);
+    }
+  }
+
+  // Ask Gemini's image model to restyle a representative photo in the chosen
+  // theme, so the user can compare before/after before committing. Mirrors
+  // designTheme's requestSeq guard: a superseded call (photo set or theme
+  // changed mid-flight — see addFiles/adoptSample/pickPreset/designTheme
+  // above, which bump requestSeq and reset this state) must never paint a
+  // stale result, and must not be the one to clear renderBusy — those sites
+  // clear it themselves so the button doesn't stay stuck on "Rendering…".
+  async function visualizeTheme() {
+    if (files.length === 0 || !report || renderBusy || themeBusy) return;
+    const myReq = ++requestSeq.current;
+    setRenderError(null);
+    setRenderBusy(true);
+
+    renderAbort.current?.abort();
+    const controller = new AbortController();
+    renderAbort.current = controller;
+    try {
+      const { source, render } = await renderTheme(files, report, controller.signal);
+      if (requestSeq.current !== myReq) return;
+      setRenderSource(`data:${source.mimeType};base64,${source.data}`);
+      setRenderResult(render);
+    } catch (e) {
+      if (requestSeq.current !== myReq) return;
+      setRenderError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (requestSeq.current === myReq) setRenderBusy(false);
     }
   }
 
@@ -428,33 +520,22 @@ export default function UploadPage() {
                 </div>
                 <div
                   className={`flex items-center gap-1.5 text-xs font-medium ${
-                    goodOverlap ? "text-sage" : "text-fawn"
+                    overlapState === "low" ? "text-fawn" : "text-sage"
                   }`}
                 >
                   <span
                     className={`size-[7px] rounded-full ${
-                      goodOverlap ? "bg-sage" : "bg-fawn"
+                      overlapState === "low" ? "bg-fawn" : "bg-sage"
                     }`}
                   />
-                  {goodOverlap ? "Good overlap" : "More angles help"}
+                  {overlapState === "good"
+                    ? "Good overlap"
+                    : overlapState === "sample"
+                      ? "Curated sample set"
+                      : "More angles help"}
                 </div>
               </div>
-              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
-                {thumbs.map((src, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={src}
-                    src={src}
-                    alt={`Photo ${i + 1}`}
-                    className="aspect-square rounded-md object-cover"
-                  />
-                ))}
-                {files.length > THUMB_LIMIT && (
-                  <div className="flex aspect-square items-center justify-center rounded-md bg-ink/5 text-xs font-medium text-fawn">
-                    +{files.length - THUMB_LIMIT}
-                  </div>
-                )}
-              </div>
+              <FrameGallery urls={thumbs} timestamps={frameTimestamps} />
             </>
           )}
         </section>
@@ -539,6 +620,77 @@ export default function UploadPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Visualize theme — an image-to-image restyle of an actual
+                  venue photo, shown for both preset and Gemini-designed
+                  themes (not gated on selection.source). */}
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={visualizeTheme}
+                    disabled={files.length === 0 || !report || renderBusy || themeBusy}
+                    className="rounded-lg border border-ink/15 bg-white px-3.5 py-2 text-[12.5px] font-semibold text-clay transition-colors hover:border-terra hover:bg-[#fbf3ec] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {renderBusy
+                      ? "Rendering…"
+                      : renderResult
+                        ? "✦ Re-render"
+                        : "✦ Visualize theme"}
+                  </button>
+                </div>
+
+                {renderError && (
+                  <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {renderError}
+                  </div>
+                )}
+
+                {!renderError && (renderBusy || renderResult) && (
+                  <div className="mt-3 grid grid-cols-2 gap-2.5">
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold tracking-wide text-fawn uppercase">
+                        Your photo
+                      </div>
+                      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-[#efe7dc]">
+                        {renderSource ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={renderSource}
+                            alt="Original venue photo"
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="absolute inset-0 flex items-center justify-center text-[11px] text-fawn">
+                            Preparing…
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[10px] font-semibold tracking-wide text-fawn uppercase">
+                        Restyled
+                      </div>
+                      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-[#efe7dc]">
+                        {renderBusy ? (
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="animate-spin-ring size-7 rounded-full border-[3px] border-ink/15 border-t-terra" />
+                          </div>
+                        ) : (
+                          renderResult && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={renderResult}
+                              alt={`Venue restyled in the "${report.theme_name}" theme`}
+                              className="absolute inset-0 h-full w-full object-cover"
+                            />
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {selection?.source === "gemini" && (

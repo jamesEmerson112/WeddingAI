@@ -146,12 +146,14 @@ function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
  * Extract evenly spaced JPEG frames from a video file.
  *
  * Returns Files named `frame_0001.jpg`… so they sort correctly and flow into
- * the existing photo path unchanged.
+ * the existing photo path unchanged, alongside a parallel `timestamps` array
+ * (seconds into the source video) so a viewer can label each frame — index i
+ * of one corresponds to index i of the other.
  */
 export async function extractFrames(
   file: File,
   opts: ExtractOptions = {},
-): Promise<File[]> {
+): Promise<{ frames: File[]; timestamps: number[] }> {
   const { onProgress, signal, targetFrames = TARGET_FRAMES, maxWidth = MAX_WIDTH } = opts;
 
   if (signal?.aborted) throw abortError();
@@ -198,6 +200,7 @@ export async function extractFrames(
     if (!ctx) throw new Error("Could not create a canvas to decode frames into.");
 
     const frames: File[] = [];
+    const timestamps: number[] = [];
     for (let i = 0; i < count; i++) {
       if (signal?.aborted) throw abortError();
 
@@ -210,11 +213,12 @@ export async function extractFrames(
       const blob = await canvasToJpeg(canvas);
       const name = `frame_${String(i + 1).padStart(4, "0")}.jpg`;
       frames.push(new File([blob], name, { type: "image/jpeg" }));
+      timestamps.push(t);
 
       onProgress?.(i + 1, count);
     }
 
-    return frames;
+    return { frames, timestamps };
   } finally {
     // Drop the decoder's hold on the blob before revoking, or Safari can keep
     // the whole video buffered in memory.

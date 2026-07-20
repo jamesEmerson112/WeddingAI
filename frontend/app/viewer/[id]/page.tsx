@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { sceneUrl } from "@/lib/api";
+import { isPlaceholderScene, sceneUrl } from "@/lib/api";
 import { memoryTitle } from "@/lib/memory";
 import { useJobPolling } from "@/lib/useJobPolling";
 
@@ -16,6 +16,13 @@ export default function ViewerPage() {
   // done yet when the page opens.
   const { job } = useJobPolling(id);
   const url = job ? sceneUrl(job) : null;
+  // Exact-match check, not a prefix — a real LichtFeld export can also live
+  // under /demo/ locally (NEXT_PUBLIC_DEMO_SCENE_URL, see lib/api.ts), so
+  // startsWith("/demo/") would mislabel a genuine reconstruction as the
+  // stand-in. isPlaceholderScene() compares against the one hardcoded URL the
+  // mock poller stamps (backend/src/poller.rs); a real backend/worker
+  // scene_url is an absolute R2 URL (worker/handler.py) and never matches.
+  const isPlaceholder = isPlaceholderScene(url);
 
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,13 +103,19 @@ export default function ViewerPage() {
         </Link>
       </div>
 
-      <div className="pointer-events-none absolute bottom-6 left-1/2 hidden -translate-x-1/2 items-center gap-4 rounded-full border border-white/10 bg-black/55 px-5 py-2.5 text-xs font-medium text-white/85 backdrop-blur sm:flex">
-        <span>Drag to orbit</span>
-        <span className="opacity-40">·</span>
-        <span>Scroll to zoom</span>
-        <span className="opacity-40">·</span>
-        <span>Double-click to focus</span>
-      </div>
+      {isPlaceholder ? (
+        <div className="pointer-events-none absolute bottom-6 left-1/2 hidden -translate-x-1/2 items-center gap-4 rounded-full border border-white/10 bg-black/55 px-5 py-2.5 text-xs font-medium text-white/85 backdrop-blur sm:flex">
+          <span>Stand-in scene — the real reconstruction renders here once processing runs</span>
+        </div>
+      ) : url ? (
+        <div className="pointer-events-none absolute bottom-6 left-1/2 hidden -translate-x-1/2 items-center gap-4 rounded-full border border-white/10 bg-black/55 px-5 py-2.5 text-xs font-medium text-white/85 backdrop-blur sm:flex">
+          <span>Drag to orbit</span>
+          <span className="opacity-40">·</span>
+          <span>Scroll to zoom</span>
+          <span className="opacity-40">·</span>
+          <span>Double-click to focus</span>
+        </div>
+      ) : null}
     </div>
   );
 }

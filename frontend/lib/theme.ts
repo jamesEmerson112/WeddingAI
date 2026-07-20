@@ -187,12 +187,17 @@ export async function renderOne(
 }
 
 // Convenience wrapper: restyle the middle photo of a File set (usually a
-// representative interior view).
+// representative interior view). Returns both the downscaled source photo
+// (so the caller can show a before/after without re-reading the File) and
+// the rendered data: URL. Forwards an optional AbortSignal to renderOne so a
+// superseded call (photo set or theme changed mid-flight) can be cancelled.
 export async function renderTheme(
   files: File[],
   report: ThemeReport,
-): Promise<string> {
-  const image = await downscale(files[Math.floor(files.length / 2)]);
-  if (!image) throw new Error("Couldn't read a venue photo to render from.");
-  return renderOne(image, report);
+  signal?: AbortSignal,
+): Promise<{ source: ScenePhoto; render: string }> {
+  const source = await downscale(files[Math.floor(files.length / 2)]);
+  if (!source) throw new Error("Couldn't read a venue photo to render from.");
+  const render = await renderOne(source, report, signal);
+  return { source, render };
 }

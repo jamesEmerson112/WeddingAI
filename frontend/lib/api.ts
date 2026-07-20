@@ -94,6 +94,28 @@ export async function listJobs(): Promise<Job[]> {
   return res.json();
 }
 
+// The exact placeholder URL the mock poller stamps on every completed job
+// (backend/src/poller.rs). This is the ONLY value that counts as "not a real
+// scene" — compared with strict equality, never a prefix/startsWith check. A
+// real export is either an absolute R2 URL (worker/handler.py) or, for local
+// demoing, a real scene file served from the same /demo/ directory (see
+// DEMO_SCENE_OVERRIDE below), so "starts with /demo/" would wrongly flag a
+// genuine reconstruction as the stand-in. Keep this string and its one use in
+// isPlaceholderScene() as the single source of truth.
+const PLACEHOLDER_SCENE_URL = "/demo/scene.html";
+
+// Optional local override for demoing a real LichtFeld export without
+// touching the backend. The mock poller always stamps PLACEHOLDER_SCENE_URL;
+// if NEXT_PUBLIC_DEMO_SCENE_URL is set, sceneUrl() swaps that placeholder for
+// the given path (e.g. "/demo/scene-3041.html", a real export dropped in
+// public/demo/ — see frontend/.gitignore's /public/demo/scene-*.html rule).
+// It only ever replaces the exact placeholder, never a real backend/worker
+// scene_url, so it can't accidentally mask a genuine job's scene.
+// Unset by default: frontend/.env.example ships the key empty, and .env is
+// gitignored, so a fresh clone has no override and falls straight through to
+// the tracked placeholder scene.html — which exists in git — never a 404.
+const DEMO_SCENE_OVERRIDE = process.env.NEXT_PUBLIC_DEMO_SCENE_URL || null;
+
 // Pull the viewable scene URL out of a finished job.
 // artifacts_json is a JSON string the backend stamps on completion, e.g.
 // {"scene_url": "/demo/scene.html"}. Returns null if there are no artifacts yet
@@ -102,8 +124,20 @@ export function sceneUrl(job: Job): string | null {
   if (!job.artifacts_json) return null;
   try {
     const artifacts = JSON.parse(job.artifacts_json) as { scene_url?: string };
-    return artifacts.scene_url ?? null;
+    const url = artifacts.scene_url ?? null;
+    if (url === PLACEHOLDER_SCENE_URL && DEMO_SCENE_OVERRIDE) {
+      return DEMO_SCENE_OVERRIDE;
+    }
+    return url;
   } catch {
     return null;
   }
+}
+
+// Precise placeholder check for the viewer: true only for the exact mock
+// stand-in URL, never for a prefix match. See PLACEHOLDER_SCENE_URL above for
+// why prefix matching (e.g. startsWith("/demo/")) is wrong here — a real
+// export can also be served from /demo/ locally via DEMO_SCENE_OVERRIDE.
+export function isPlaceholderScene(url: string | null): boolean {
+  return url === PLACEHOLDER_SCENE_URL;
 }
