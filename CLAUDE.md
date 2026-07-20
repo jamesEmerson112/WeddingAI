@@ -133,8 +133,34 @@ Pipeline gotchas from the LichtFeld manual: COLMAP images must be **undistorted*
 every load — pre-resize photos before training; GPU floor is SM 7.5 with 8 GB+
 VRAM, no multi-GPU.
 
-## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~20:10 UTC)
+## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~04:40 UTC)
 
+- 🚨 **DO NOT PUSH UNTIL RAILWAY POSTGRES EXISTS.** Local commit `dcb8392`
+  migrates the backend SQLite → Postgres. `main.rs` panics on
+  `expect("failed to connect to the database")` if `DATABASE_URL` doesn't
+  resolve, so pushing before the Postgres service is provisioned **takes the
+  live backend down**. Required user action, in order:
+  1. Add a Postgres service to the Railway project (`+ New` → Postgres).
+  2. On the **backend** service set `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+     (Railway reference syntax; resolves to the private
+     `postgres.railway.internal` URL. `DATABASE_PUBLIC_URL` is the TCP-proxy
+     external one and bills egress — don't use it service-to-service).
+  3. Then push, then reseed.
+  Railway's public/private variable NAMES have changed across versions — verify
+  in the dashboard rather than trusting the docs.
+- **Postgres migration DONE + VERIFIED locally** (`dcb8392`, unpushed). Verified
+  against a real Postgres 16 in Docker, not merely compiled: fmt/clippy/4 tests
+  pass, migrations apply, and a full `uploaded → done` job walk exercised every
+  rewritten statement. Two silent-at-compile-time landmines caught and fixed:
+  `iters` must be **BIGINT** (db.rs declares `i64`; Postgres `int4` is strict and
+  sqlx won't widen it), and `created_at` must stay **TEXT** defaulting to
+  `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` — the obvious
+  `CURRENT_TIMESTAMP` would break every date in the Memories grid, because
+  `frontend/app/jobs/page.tsx` regex-matches SQLite's exact format to parse UTC.
+- **Local dev now REQUIRES a database**: `docker compose up -d` from `backend/`.
+  Postgres has no `sqlite::memory:` equivalent, so `cargo run` AND `cargo test`
+  both need a live server (CI got a Postgres service container). Tests each get
+  their own schema so parallel runs can't collide on one `jobs` table.
 - **Backend LIVE**: `https://weddingai-production.up.railway.app` (mock mode).
   `GET /api/health` verifies process + DB + config in one request (reports
   `mock_mode`, `public_base_url`, `version`; 503 if DB unreachable). Railway
@@ -152,7 +178,11 @@ VRAM, no multi-GPU.
   with a real image → real `gemini-3.5-flash` structured report. Key also in
   `frontend/.env` (verified gitignored via `frontend/.gitignore:34`) for local
   dev. Still to run: full incognito upload → viewer test.
-- **`/api/render` DEPLOYED but BLOCKED BY KEY TIER**: live calls 429 with
+- **GEMINI BILLING ENABLED by the user (~04:30 UTC) — `/api/render` should now
+  work; NOT yet re-tested.** The block below described the free-tier 429; it is
+  believed resolved. Verify with a live "Visualize theme" call before relying on
+  it in the demo, then delete the stale block below.
+- **`/api/render` (STALE — see the billing note above) was BLOCKED BY KEY TIER**: live calls 429 with
   `generate_content_free_tier` quota exceeded — the Gemini key's project is
   FREE TIER, which has no real image-generation allowance (text models work).
   Verified via direct REST: `gemini-2.5-flash-image` IS on the key's model
@@ -245,10 +275,38 @@ VRAM, no multi-GPU.
   `frontend/app/page.tsx`. Locally needs `frontend/.env.local` — USER runs:
   `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`.
 
-## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~01:45 UTC)
+## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~04:40 UTC)
 
-RunPod pod is ALIVE. The clean rebuild **FAILED** (see build attempt #3 below);
-a background agent is now diagnosing and retrying it.
+✅ **LICHTFELD BUILD SUCCEEDED (2026-07-20 ~04:15 UTC).** Binary at
+**`/workspace/dist/bin/run_lichtfeld.sh`** — on the PERSISTENT network volume, so
+it survives pod termination. Verified runnable (exit 0, full help text, all
+subcommands). No Blackwell/RTX 5090 JIT errors; `CMAKE_CUDA_ARCHITECTURES` was
+auto-detected as `120-real;120-virtual`. Caveat: this only exercised startup and
+CLI parsing — a real CUDA kernel JIT only triggers on an actual training run.
+
+⚠️ **THE POD IS STILL RUNNING AND BILLING ~$1/hr.** Terminate when done; the
+volume (and therefore the binary) survives, but `/root/.cache/vcpkg` does not.
+
+**Two root causes, both found by experiment — record them so nobody re-guesses:**
+1. The mass `.o.d: No such file or directory` failure was **NOT** a MooseFS/network
+   filesystem race. That hypothesis was **disproven** by relocating the build to
+   local container disk and reproducing the identical instant failure. The real
+   cause: LichtFeld's own `cmake/CompilerCacheLauncher.cmake` (a ccache wrapper,
+   ON by default) runs `execute_process(... WORKING_DIRECTORY <top-level build
+   root>)` while the enclosing Makefile rule has already `cd`'d into the
+   per-target subdir, so every relative `-MF .../*.o.d` resolved against the wrong
+   directory. Deterministic, not a race — which is exactly why CUDA/nvcc objects
+   (which bypass the launcher) were unaffected. **Fix: `-DENABLE_COMPILER_CACHE=OFF`.**
+2. Then, at 100%, a GCC 14 link failure: `undefined reference to
+   std::__stacktrace_impl::_S_current`. `std::stacktrace` lives in a separate
+   archive (`libstdc++exp.a`); `libOpenImageIO.a` also needs those symbols but is
+   flattened AFTER it, and GNU ld's single left-to-right pass never rescans.
+   `LINK_GROUP:RESCAN` and `$<LINK_LIBRARY:WHOLE_ARCHIVE,...>` both failed to fix
+   it. **Fix: raw `-Wl,--whole-archive <path> -Wl,--no-whole-archive` strings
+   passed to `target_link_libraries`** in `src/core/CMakeLists.txt` — raw strings
+   bypass CMake's link-line reordering; library names don't.
+   Edits live only on the pod's throwaway clone (backup:
+   `/workspace/src_core_CMakeLists.txt.bak`), NOT in this repo.
 
 - **Pod**: RTX 5090 (32 GB, 32 vCPU, Ubuntu 24.04, CUDA 12.8.93 at
   `/usr/local/cuda`, NOT on default SSH PATH), euro-3. 120 GB network volume

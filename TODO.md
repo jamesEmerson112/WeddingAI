@@ -54,13 +54,25 @@ build + lint green, smoke-tested on a local prod server.
       11 confirmed, all fixed in `bfa806d`). Vercel deploy verified live.
 - [ ] **RESEED the demo jobs** — the push wiped Railway's DB, live count is 0.
 
-## 1.6 Real 3D run (blocked on the pod build, NOT on photos)
+## 1.6 Real 3D run (build DONE — now blocked only on running it)
 
-- [ ] LichtFeld build attempt #3 FAILED (see CLAUDE.md Phase 0 — mass `.o.d`
-      error, MooseFS hypothesis). Background agent diagnosing + retrying.
-      Once `dist/bin/run_lichtfeld.sh` exists: COLMAP → train → `convert` to
+- [x] **LichtFeld build SUCCEEDED** — `/workspace/dist/bin/run_lichtfeld.sh` on
+      the persistent volume (see CLAUDE.md Phase 0 for the two root causes).
+- [ ] Run the pipeline: shoot/convert a video → COLMAP → train → `convert` to
       scene.html → scp down → `frontend/public/` + point a job's
       artifacts_json at it.
+- [ ] **TERMINATE THE POD** when done — still billing ~$1/hr.
+
+## 1.7 Storage: Postgres + volume (Phase 1 of 3 done)
+
+- [x] Phase 1: SQLite → Postgres, verified against real Postgres 16 (`dcb8392`,
+      UNPUSHED — pushing before Railway Postgres exists takes the backend down).
+- [ ] **USER: provision Railway Postgres**, set backend `DATABASE_URL` to
+      `${{Postgres.DATABASE_URL}}`, then push + reseed.
+- [ ] Phase 2: attach `/data` volume; persist the upload zip + the ≤8 downscaled
+      photos; `photos` table; GET/POST photo routes.
+- [ ] Phase 3: real gallery thumbnails (replacing the CSS gradient at
+      `frontend/app/jobs/page.tsx:129`) + Studio loading any past memory.
 - [x] Photo decision (user, ~01:40 UTC): **try the 6–7 views we already have
       first** (`photos-inbox/Location-2/`, 7 JPEGs @1024×768 — no pre-resize
       needed). Only if that fails does the user shoot a 40–150 set. Expect a
