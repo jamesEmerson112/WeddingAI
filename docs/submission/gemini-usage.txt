@@ -1,0 +1,69 @@
+WHERE GEMINI IS USED
+====================
+Gemini powers the two central capabilities of the product. Both calls are made
+server-side; the API key never reaches the browser.
+
+
+1. THEME DESIGN - STRUCTURED OUTPUT
+-----------------------------------
+File:  frontend/app/api/analyze/route.ts
+Model: gemini-3.5-flash
+
+Input:  up to 8 evenly sampled photos of the user's venue, downscaled in the
+        browser to ~1024px JPEG before being sent.
+Output: a schema-constrained JSON "ThemeReport" containing:
+          theme_name, one_liner, description
+          color_palette[]  - 5 named colours with real hex values
+          decor[]          - concrete styling recommendations
+          florals[]        - floral recommendations
+          venue_observations - what Gemini noticed in THIS room
+          photo_coverage   - good | usable | poor, plus advice, i.e. Gemini
+                             judging whether the footage could reconstruct in 3D
+          tags[]
+
+The palette is rendered as real swatches in the UI, and the coverage verdict is
+surfaced as guidance to the user. The response is validated before rendering.
+
+
+2. VENUE RESTYLING - IMAGE TO IMAGE
+-----------------------------------
+File:  frontend/app/api/render/route.ts
+Model: gemini-2.5-flash-image
+
+Input:  a real photo of the user's venue plus the selected theme.
+Output: a photorealistic render of THAT room styled for the wedding.
+
+Used by the "Visualize theme" button on the upload screen, and by the Studio
+screen, which restyles a whole set of frames sequentially with per-image
+progress and per-image error tiles.
+
+
+WHY GEMINI IS NECESSARY
+=======================
+This product cannot exist without a multimodal model. The core value is that
+the design is derived from the user's actual room rather than being generic:
+Gemini has to look at the real space, reason about its light, architecture and
+existing colours, produce a structured design that a UI can render, and then
+generate a photorealistic restyle anchored to that same room. A text-only model
+could produce a mood board; only a multimodal model can look at your venue and
+show it back to you transformed.
+
+
+SECURITY AND RELIABILITY
+========================
+- Key handling: GEMINI_API_KEY is read only inside Next.js server-side route
+  handlers. It is never referenced in client code and never appears in any
+  browser bundle. .env* is gitignored.
+- Error mapping: 400 for missing or invalid input, 502 for a Gemini failure or
+  a malformed/unparseable response, 504 for timeout (50s cap, maxDuration=60).
+  No stack traces and no key material appear in any response body.
+- Bounded input: at most 8 photos, downscaled before sending, which keeps
+  latency and cost predictable.
+- Caching: theme reports are cached in localStorage against a fingerprint of
+  the photo set, so re-selecting the same photos resolves instantly rather than
+  re-calling Gemini.
+- Progress states are shown during every generation.
+- In-flight responses are guarded by a request-generation ref, so a slow reply
+  for an old photo set can never paint over a newer one.
+- Disclosure: the UI states that theme design and restyling are powered by
+  Google Gemini, next to the features themselves.

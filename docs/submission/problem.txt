@@ -1,0 +1,38 @@
+PROBLEM STATEMENT
+=================
+Couples commit tens of thousands to a wedding venue after touring an empty room.
+
+The gap between "beige function hall on a Tuesday afternoon" and "our wedding"
+is enormous, and nothing currently bridges it:
+
+- Venue tours show the space unstyled, empty, and under fluorescent light.
+- Mood boards and Pinterest show other people's weddings in other people's
+  venues, which tells you nothing about how YOUR room will look.
+- Professional visualisation and 3D renders exist, but cost more than most
+  couples' entire decor budget and take weeks to turn around.
+
+The result is that the single most expensive decision of the whole event is
+made almost entirely on imagination. The uncertainty doesn't resolve at
+booking either - the "will this actually look like anything?" anxiety runs all
+the way to the day itself, and drives both overspending on decor and regret
+afterwards.
+
+
+TARGET USER
+===========
+Primary: engaged couples who are choosing between venues, or who have booked
+one and are deciding how to style it. They are non-technical, working to a
+fixed budget, and typically planning around full-time jobs.
+
+Secondary: wedding planners and venue sales teams, who have the same problem
+from the other side - they must sell a vision of an empty room to a sceptical
+couple, and currently do it with a portfolio of somebody else's wedding.
+
+
+WHY IT HASN'T BEEN SOLVED
+=========================
+Photorealistic restyling of a specific real room used to require either a 3D
+artist or a photogrammetry pipeline plus manual set dressing. Both are too slow
+and too expensive for a consumer purchase. What changed is that a multimodal
+model can now look at real photos of a specific space, reason about its light
+and architecture, and generate a coherent restyle anchored to that room.

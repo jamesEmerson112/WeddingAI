@@ -1,0 +1,15 @@
+TEAM INFORMATION
+================
+
+Solo submission.
+
+Built entirely by one person during the hackathon: product definition, Gemini
+integration, frontend, Rust backend, database, deployment, and the GPU
+reconstruction pipeline.
+
+GitHub: https://github.com/jamesEmerson112
+
+Note for judges: this is a single-person team, so the scope was deliberately
+prioritised - the Gemini capabilities are fully implemented and deployed, while
+the 3D reconstruction stage runs in mock mode in the deployed app. That
+trade-off is stated plainly in the README rather than glossed over.

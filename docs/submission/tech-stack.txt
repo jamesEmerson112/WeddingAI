@@ -1,0 +1,42 @@
+TECHNOLOGY STACK
+================
+
+AI
+--
+Google Gemini (Gemini Developer API)
+  gemini-3.5-flash        - theme design, structured JSON output
+  gemini-2.5-flash-image  - image-to-image venue restyling
+Called exclusively from server-side Next.js route handlers.
+
+Frontend
+--------
+Next.js 16 (App Router) + React 19
+TypeScript (strict)
+Tailwind CSS 4
+JSZip - client-side zipping of the photo/frame set
+Browser <video> + <canvas> - in-browser video frame extraction, no dependency
+Deployed on Vercel
+
+Backend
+-------
+Rust + Axum
+sqlx (runtime queries, no compile-time macros)
+PostgreSQL
+Tokio background poller driving the job state machine
+Deployed on Railway (Docker), with Railway Postgres
+
+3D pipeline (built, not yet wired to the web app)
+-------------------------------------------------
+COLMAP - structure from motion
+LichtFeld Studio - 3D Gaussian Splatting training, compiled and verified on an
+                   NVIDIA RTX 5090 (CUDA 12.8)
+ffmpeg - frame extraction for local and GPU-side runs
+RunPod - on-demand GPU
+
+Engineering
+-----------
+GitHub Actions CI on every push and PR:
+  cargo fmt --check
+  cargo clippy -- -D warnings   (warnings fail the build)
+  cargo test                    (against a Postgres service container)
+  next build

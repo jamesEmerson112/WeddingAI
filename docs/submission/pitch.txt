@@ -1,0 +1,22 @@
+PRODUCT NAME
+============
+WeddingAI
+
+
+ONE-SENTENCE PITCH
+==================
+WeddingAI helps engaged couples see their actual wedding venue styled as their
+wedding day by using Gemini to design a theme from a phone video of the empty
+room and render the room restyled in it, replacing weeks of imagination and
+thousands in visualisation fees with about a minute.
+
+
+SHORTER VARIANT (if a character limit bites)
+============================================
+WeddingAI turns a phone video of an empty venue into a Gemini-designed wedding
+theme and a photorealistic render of that exact room styled for the day.
+
+
+TAGLINE
+=======
+Walk into your wedding before it exists.

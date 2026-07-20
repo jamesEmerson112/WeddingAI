@@ -1,0 +1,40 @@
+SUBMISSION LINKS
+================
+
+Public application URL
+  https://wedding-ai-omega.vercel.app
+
+GitHub repository
+  https://github.com/jamesEmerson112/WeddingAI
+  (must be PUBLIC or explicitly accessible to judges - verify before submitting)
+
+Backend API (not a judge-facing link, listed for completeness)
+  https://weddingai-production.up.railway.app
+  Health check: https://weddingai-production.up.railway.app/api/health
+
+Demo credentials
+  None required. No login, no signup, no paywall.
+
+Pitch video (2 minutes)
+  TODO - paste URL after upload
+
+Product demo video (~1 minute)
+  TODO - paste URL after upload
+
+
+PRE-SUBMISSION CHECKS
+=====================
+Run every one of these in an INCOGNITO window, since a logged-in browser hides
+exactly the failures judges will hit:
+
+[ ] App URL loads
+[ ] The Memories gallery shows finished scenes (reseed if empty:
+    scripts/seed-demo-jobs.sh)
+[ ] "Or let Gemini design from my photos" returns a real theme report
+[ ] "Visualize theme" returns a real render
+    NOTE: this was blocked by a free-tier quota until billing was enabled on
+    2026-07-20. Confirm it works before submitting - it had not been re-tested.
+[ ] A new job walks the pipeline and the viewer opens
+[ ] GitHub repo opens while logged out
+[ ] Both video links play while logged out
+[ ] README renders correctly on GitHub

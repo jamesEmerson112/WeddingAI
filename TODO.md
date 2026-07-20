@@ -122,17 +122,26 @@ before the deadline, not hours. Locked targets: backend → Railway, frontend �
 - [ ] Verify the full flow on the public URL in an incognito browser (spec §12).
 - [x] Auto-redeploy on `git push` confirmed working (Railway and Vercel).
 
-## 3. Submission materials (spec §9 — prepare before the form appears)
+## 3. Submission materials (spec §9) — WRITTEN, needs recording + links
 
-- [ ] README restructure per spec §10 (product overview, problem, solution, Gemini
-      integration note, architecture, setup, env var names, deployment, demo link).
-- [ ] Product name + one-sentence pitch (template in spec §11).
-- [ ] Problem statement + target user.
-- [ ] Explanation of exactly where Gemini is used.
-- [ ] Two-minute pitch video + ~one-minute product demo video.
-- [ ] Screenshots of the finished product.
-- [ ] Business-potential blurb; team info (solo submission).
-- [ ] Final check: all links tested in incognito (spec §12).
+All copy lives in `docs/submission/` (separate file per form field).
+
+- [x] README fully rewritten per spec §10 — all nine required sections, plus an
+      "Honest status" section stating that 3D reconstruction is mock in the
+      deployed app. Every claim verified against code.
+- [x] `pitch.txt` — product name + one-sentence pitch (spec §11 template).
+- [x] `problem.txt` — problem statement + target user.
+- [x] `gemini-usage.txt` — exactly where Gemini is used, with file paths.
+- [x] `tech-stack.txt`, `business-potential.txt`, `team.txt`, `demo-links.txt`.
+- [x] `pitch-video-script.md` (2 min, timed) + `demo-video-script.md` (~1 min).
+- [x] `screenshot-shotlist.md` — which five screens to capture, and captions.
+- [ ] **USER: record the two videos** and paste the URLs into `demo-links.txt`.
+- [ ] **USER: capture screenshots** per the shot list → `docs/submission/screenshots/`.
+- [ ] **USER: verify `/api/render` works** post-billing — it gates the best
+      screenshot and a whole beat of the demo video, and is still untested.
+- [ ] **USER: confirm the GitHub repo is public** (spec §12).
+- [ ] Final check: all links tested in incognito (spec §12) — checklist is at
+      the bottom of `demo-links.txt`.
 
 ## Open decisions
 

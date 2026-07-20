@@ -1,98 +1,261 @@
 # WeddingAI
-Stanford x DeepMind Hackathon
 
-Built on the open-source [splat-service](https://github.com/jamesEmerson112/splat-service) boilerplate: photos in, a browser-viewable 3D scene out. Upload a few dozen overlapping photos of one place and the service reconstructs it as a **3D Gaussian Splatting** scene you can orbit in any browser — no plugins, no app. Behind the scenes a cloud GPU worker runs COLMAP (structure-from-motion) then [LichtFeld Studio](https://github.com/MrNeRF/LichtFeld-Studio) (headless training), exports a self-contained scene, and stores it on object storage. The whole upload → job → progress → viewer loop runs **locally with zero cloud credentials** thanks to a built-in mock mode (see Quickstart). The stack is a small, deliberately readable Rust/Axum backend, a Next.js frontend, and a Python GPU worker.
+**Stanford × DeepMind Hackathon — solo submission**
+
+**Live demo:** https://wedding-ai-omega.vercel.app
+
+Walk into your wedding before it exists. WeddingAI takes a video walkthrough of
+an empty venue, uses **Google Gemini** to design a wedding theme from that
+specific room and to render the room restyled in that theme, and builds toward a
+3D scene you can move through.
+
+---
+
+## Product overview
+
+You film a slow 60-second orbit of an empty venue on your phone. WeddingAI:
+
+1. **Turns the video into an evenly spaced photo set** in your browser — no
+   manual photography, no huge upload.
+2. **Designs a wedding theme from your actual room** with Gemini, returning a
+   structured design report: palette with real hex values, decor, florals,
+   styling notes, and an assessment of whether your footage is good enough to
+   reconstruct in 3D.
+3. **Renders your venue restyled in that theme** with Gemini's image model —
+   your room, not a stock photo.
+4. **Runs the scene through a 3D reconstruction pipeline** so it becomes a space
+   you can walk through. *(See "Honest status" — this stage runs in mock mode in
+   the deployed app today.)*
+
+## Problem
+
+Couples commit tens of thousands to a venue after touring an **empty room**. The
+gap between "beige function hall on a Tuesday afternoon" and "our wedding" is
+enormous, and nothing bridges it:
+
+- **Venue tours** show the space unstyled, empty, under fluorescent light.
+- **Mood boards and Pinterest** show *other people's* weddings in *other
+  people's* venues.
+- **Professional visualisation** exists, but costs more than most couples' whole
+  decor budget and takes weeks.
+
+So the most expensive decision of the entire event gets made largely on
+imagination — and the anxiety of "will this actually look like anything?" runs
+right up to the day itself.
+
+**Target user:** engaged couples choosing or styling a venue, plus the wedding
+planners and venue sales teams who have to sell a vision of an empty room.
+
+## Solution
+
+WeddingAI closes that gap using the two things a couple already has: a phone,
+and a venue they can stand in.
+
+Point the camera and walk. From that one video, Gemini produces a coherent
+design for *your* room and then shows you the room wearing it. Because the
+design is derived from the actual space — its light, its architecture, its
+existing colours — the result is specific rather than generic.
+
+The capture step matters as much as the AI. 3D reconstruction needs 40–150
+overlapping photos of one place, which nobody will shoot by hand. A 45–90 second
+video gives the same coverage in one take, and WeddingAI extracts the frames
+automatically.
+
+## Gemini integration
+
+Gemini is the product, not a garnish. Two server-side capabilities:
+
+### 1. Theme design — structured output
+**`frontend/app/api/analyze/route.ts`** · model `gemini-3.5-flash`
+
+Sends up to 8 evenly sampled, downscaled venue photos and receives a
+**schema-constrained JSON** `ThemeReport`:
+
+| Field | Purpose |
+|---|---|
+| `theme_name`, `one_liner`, `description` | the design concept |
+| `color_palette[]` | 5 named colours with real hex values, rendered as swatches |
+| `decor[]`, `florals[]` | concrete styling recommendations |
+| `venue_observations` | what Gemini actually noticed in *your* room |
+| `photo_coverage` | `good` / `usable` / `poor` + advice — Gemini judging whether the footage can reconstruct in 3D |
+| `tags[]` | styling keywords |
+
+The response is validated before rendering; a malformed response is a handled
+error, not a crash.
+
+### 2. Venue restyling — image to image
+**`frontend/app/api/render/route.ts`** · model `gemini-2.5-flash-image`
+
+Takes a real photo of the venue plus the chosen theme and generates a
+photorealistic render of **that room** styled for the wedding. Used on the
+upload screen ("Visualize theme") and throughout the Studio screen, which
+restyles a whole set of frames in sequence with per-image progress and error
+handling.
+
+### Security and reliability
+
+- **The API key never reaches the browser.** Both calls are Next.js server-side
+  route handlers; `GEMINI_API_KEY` is read server-side only and never appears in
+  any client bundle.
+- **Errors are mapped, not leaked:** `400` missing/invalid input, `502` Gemini
+  failure or malformed response, `504` timeout (50s cap, `maxDuration=60`). No
+  stack traces and no key material appear in any response.
+- **Input is bounded:** at most 8 photos, downscaled to ~1024px JPEG before
+  sending, keeping latency and cost predictable.
+- **Repeat calls are avoided:** theme reports are cached in `localStorage`
+  against a fingerprint of the photo set, so re-selecting the same photos
+  resolves instantly instead of re-billing Gemini.
+- **Progress is always visible**, and in-flight responses are guarded by a
+  request-generation ref so a slow reply can never paint over a newer one.
+- **Gemini's role is disclosed in the UI**, next to the features it powers.
 
 ## Architecture
 
 ```
-  ┌─────────┐   HTTP    ┌──────────────┐   HTTP    ┌──────────────┐
-  │ Browser │ ────────▶ │  Next.js FE  │ ────────▶ │   Axum BE    │
-  │ (you)   │ ◀──────── │   :3000      │ ◀──────── │   :8080      │
-  └─────────┘           └──────────────┘           └──────┬───────┘
-   upload photos          upload UI, job                  │ creates job,
-   orbit the scene        stepper, viewer                 │ polls for progress
-                                                          ▼
-                              ┌───────────────────────────────────────────┐
-                              │  Worker (one of two, chosen by MOCK_MODE)  │
-                              │                                            │
-                              │  MOCK poller  ─── walks the state machine  │
-                              │                   on a timer (no GPU)      │
-                              │                                            │
-                              │  RunPod GPU worker ── COLMAP ──▶ LichtFeld │
-                              │  (real mode)          (SfM)      Studio    │
-                              │                                 (train)    │
-                              └───────────────────┬───────────────────────┘
-                                                  │ artifacts (scene.html/.sog)
-                                                  ▼
-                                          ┌────────────────┐
-                                          │  R2 artifacts  │
-                                          │ (object store) │
-                                          └────────────────┘
+                    ┌───────────────────────────────────────────┐
+  phone video  ──►  │  Browser                                  │
+                    │  <video>+<canvas> → ~110 JPEG frames      │
+                    │  (lib/frames.ts)  → JSZip                 │
+                    └───────┬───────────────────────┬───────────┘
+                            │                       │
+              downscaled ≤8 │                       │ frames.zip
+                            ▼                       ▼
+              ┌─────────────────────────┐   ┌──────────────────────┐
+              │ Next.js route handlers  │   │  Axum backend        │
+              │  /api/analyze  (Gemini) │   │  (Rust) on Railway   │
+              │  /api/render   (Gemini) │   │  jobs + state machine│
+              │  SERVER-SIDE ONLY       │   │  Postgres            │
+              └─────────────────────────┘   └──────┬───────────────┘
+                                                   │
+                                            ┌──────▼───────────────┐
+                                            │ Worker               │
+                                            │ mock poller (default)│
+                                            │ or RunPod GPU:       │
+                                            │ COLMAP → LichtFeld   │
+                                            └──────────────────────┘
 ```
 
-**Job state machine:** `uploaded → queued → sfm → training → exporting → done` (any state → `failed`).
+**Job state machine:** `uploaded → queued → sfm → training → exporting → done`,
+with `failed` reachable from any state.
 
-## Quickstart (mock mode)
+**Mock vs real is decided in exactly one place** — `AppState::new` in
+`backend/src/state.rs` selects `WorkerClient::Mock` or `WorkerClient::Runpod`
+from `MOCK_MODE`.
 
-No GPU, no RunPod, no R2 — the backend's mock poller marches each job through
-every state on a timer, and the viewer shows a placeholder scene. Two terminals:
+| Path | Owns |
+|---|---|
+| `frontend/app/api/analyze`, `api/render` | the two Gemini capabilities (server-side) |
+| `frontend/lib/frames.ts` | video → evenly spaced frames, in-browser |
+| `frontend/lib/theme.ts` | downscaling, Gemini calls, caching |
+| `backend/src/routes.rs` | HTTP endpoints |
+| `backend/src/db.rs` | job model + every SQL statement |
+| `backend/src/poller.rs` | advances active jobs |
+| `worker/handler.py` | GPU pipeline (blueprint) |
+| `scripts/video-to-frames.sh` | ffmpeg frame extraction for local/GPU runs |
+
+## Honest status
+
+So judges know exactly what they are looking at:
+
+- ✅ **Gemini theme design is live**, running against real uploaded photos.
+- ✅ **Gemini venue restyling is live.**
+- ✅ **Video → frame extraction is live**, in-browser.
+- ✅ **Backend, job state machine and Postgres are live** and survive redeploys.
+- ⚠️ **3D reconstruction runs in mock mode in the deployed app.** Jobs walk the
+  real state machine on real timings and return a **placeholder scene**.
+- ⚠️ **The real pipeline is built but not yet wired to the web app.** LichtFeld
+  Studio was compiled and verified on an RTX 5090, and COLMAP frame extraction
+  is scripted — but the deployed app does not yet run a live reconstruction.
+
+The Gemini capability this hackathon requires is fully real. The 3D stage is the
+roadmap, and is labelled as such rather than implied.
+
+## Local setup
+
+Requires Rust, Node 22+, and Docker (for Postgres).
 
 ```bash
-# Terminal 1 — backend (Rust/Axum on :8080)
+git clone https://github.com/jamesEmerson112/WeddingAI.git
+cd WeddingAI
+
+# Backend — Postgres must be running first
 cd backend
 cp .env.example .env
-cargo run
+docker compose up -d          # Postgres on :5432
+cargo run                     # :8080, migrations run automatically
 
-# Terminal 2 — frontend (Next.js on :3000)
+# Frontend — in a second terminal
 cd frontend
+cp .env.example .env          # then add your GEMINI_API_KEY
 npm install
-npm run dev
-# (no env file needed: the frontend defaults to http://localhost:8080;
-#  set NEXT_PUBLIC_API_URL in .env.local to point elsewhere)
+npm run dev                   # :3000
 ```
 
-Open http://localhost:3000, drop in a few images, and hit upload. What you'll
-see: the job appears in `uploaded`, then advances **one stage every ~5 seconds**
-(`queued → sfm → training → exporting`), reaching **`done` in ~25 seconds**. The
-"View scene" link opens the **placeholder scene** in the viewer. (The first
-`cargo run` compiles dependencies and is slow; subsequent runs are instant.)
+Open http://localhost:3000. Mock mode is the default, so no GPU or cloud
+credentials are needed — a job reaches `done` in about 25 seconds.
 
-## Real mode — ROADMAP Phase 1
+Check the backend with `curl -s localhost:8080/api/health`, which reports
+process, database and config state in one request.
 
-Real mode swaps the mock poller for an actual RunPod GPU worker and stores
-artifacts on Cloudflare R2. The worker (`worker/handler.py` + `worker/Dockerfile`)
-is currently a **stub** — wiring it up is [Phase 1](./ROADMAP.md). To flip the
-backend out of mock mode you set `MOCK_MODE=false` and provide:
+```bash
+# Tests and lints (CI enforces all of these)
+cd backend  && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd frontend && npm run lint && npm run build
+```
 
-| Env var | Used by | Purpose |
-|---|---|---|
-| `MOCK_MODE=false` | backend | Use the RunPod worker + R2 presigning instead of the mock poller. |
-| `RUNPOD_API_KEY` | backend | Authenticate to the RunPod serverless API. |
-| `RUNPOD_ENDPOINT_ID` | backend | The serverless endpoint that runs the worker image. |
-| `R2_ENDPOINT` | backend, worker | Cloudflare R2 S3-compatible endpoint URL. |
-| `R2_ACCESS_KEY_ID` | backend, worker | R2 access key (presign uploads / read+write artifacts). |
-| `R2_SECRET_ACCESS_KEY` | backend, worker | R2 secret key. |
-| `R2_BUCKET` | backend, worker | Bucket holding `uploads/` and `jobs/<id>/` objects. |
-| `R2_PUBLIC_BASE` | worker | Public base URL used to build the returned `scene_url`. |
+## Environment variables
 
-## Repo layout
+Names only — no values are committed anywhere, and `.env*` is gitignored.
 
-| Path | What it is |
+**`frontend/.env`**
+
+| Variable | Purpose |
 |---|---|
-| `frontend/` | Next.js + TypeScript + Tailwind UI: upload (drag-drop → client-side zip → PUT), job-status stepper, jobs list, iframe viewer. |
-| `backend/` | Rust/Axum service + SQLite (sqlx). Job state machine, REST endpoints, background poller, and the single mock-vs-real worker switch. |
-| `worker/` | RunPod serverless GPU worker — `handler.py` + `Dockerfile`. **Phase 1 stub** (COLMAP → LichtFeld Studio → export → upload). |
-| `docs/` | Phase 0 runbook (`phase0-runbook.md`) + notes for the one-time manual pipeline. |
-| `ROADMAP.md` | The 5-phase product roadmap this repo implements. |
-| `.github/workflows/ci.yml` | CI: backend `fmt`/`clippy`/`test` + frontend `build`. |
-| `LICENSE` | MIT. |
+| `GEMINI_API_KEY` | Gemini Developer API key. **Server-side only** — read exclusively in route handlers, never exposed to the browser. |
+| `NEXT_PUBLIC_API_URL` | Backend base URL. Baked in at build time. |
 
-## More
+**`backend/.env`**
 
-- [ROADMAP.md](./ROADMAP.md) — the full 5-phase plan (manual pipeline → worker → backend → frontend → polish).
-- [docs/phase0-runbook.md](./docs/phase0-runbook.md) — step-by-step manual GPU pipeline (the commands the worker automates).
+| Variable | Purpose |
+|---|---|
+| `MOCK_MODE` | `true` = simulated pipeline (default). Anything but `false` keeps it on. |
+| `PORT` | Listen port (default 8080). |
+| `PUBLIC_BASE_URL` | Public URL of the backend; falls back to Railway's injected domain, then localhost. |
+| `DATABASE_URL` | Postgres connection string. On Railway, set to `${{Postgres.DATABASE_URL}}`. |
+| `TEST_DATABASE_URL` | Used only by `cargo test`. |
+| `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID` | Real GPU mode only. |
+| `R2_*` | Object storage for artifacts; real mode only. |
 
-## Credits & License
+## Deployment
 
-This project is based on the MIT-licensed [splat-service](https://github.com/jamesEmerson112/splat-service) boilerplate. It orchestrates LichtFeld Studio (GPLv3) strictly as an external process invoked inside the worker container — no GPL source is vendored, modified, or linked into this codebase, so the MIT license applies to everything here.
+| Component | Platform | Notes |
+|---|---|---|
+| Frontend | **Vercel** | https://wedding-ai-omega.vercel.app — auto-deploys on push to `main`. Gemini route handlers run server-side here. |
+| Backend | **Railway** | https://weddingai-production.up.railway.app — auto-deploys on push via `backend/Dockerfile`. |
+| Database | **Railway Postgres** | Persists across deploys. |
+| GPU worker | **RunPod** | On demand; not required for the demo. |
+
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy -D
+warnings`, `cargo test` (against a Postgres service container) and the frontend
+production build on every push and PR.
+
+## Demo link
+
+**https://wedding-ai-omega.vercel.app** — no login, no credentials required.
+
+Suggested 60-second path:
+
+1. **Create a memory** — drop in venue photos, or a short walkthrough video and
+   watch the frames get extracted in the browser.
+2. **Pick a preset theme**, or press **"Or let Gemini design from my photos"** to
+   trigger the live structured-output call — palette, decor, florals and a
+   coverage verdict derived from your actual room.
+3. **"Visualize theme"** to have Gemini render your venue restyled.
+4. **Create memory** → watch the job walk the pipeline → open the viewer.
+5. **"✦ Reimagine in Studio"** to restyle the whole set in a new mood.
+
+## Credits & license
+
+Built on the MIT-licensed [splat-service](https://github.com/jamesEmerson112/splat-service)
+boilerplate. LichtFeld Studio (GPLv3) is invoked as an external process only, so
+this repository remains MIT — see [LICENSE](LICENSE).

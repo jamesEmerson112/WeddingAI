@@ -1,0 +1,50 @@
+BUSINESS POTENTIAL
+==================
+
+The market
+----------
+The US wedding industry is roughly $70bn a year, and the venue is the single
+largest line item in a typical budget. Around 2 million weddings happen in the
+US annually, and essentially every one of them involves a couple trying to
+picture an empty room dressed for their day.
+
+Why this is a business and not a feature
+----------------------------------------
+The pain is acute, time-boxed and attached to a decision people are already
+spending heavily on. Couples routinely pay for photographers, planners and
+mood-boarding services; visualisation sits naturally in that same budget line
+and is currently either unavailable or priced for commercial clients.
+
+Three routes to revenue
+-----------------------
+1. Consumer subscription. A couple pays a small one-off or monthly fee during
+   the planning window (typically 6-14 months) to visualise venues and themes.
+   Naturally time-limited, but high intent and low price sensitivity relative
+   to the overall budget.
+
+2. Venue and planner B2B - the stronger motion. Venues have a direct commercial
+   incentive: a couple who can see the room styled is far likelier to book.
+   Selling per-venue seats to venues and planning firms gives recurring revenue,
+   a much shorter sales cycle than consumer acquisition, and each venue brings
+   its own couples. The 3D walkthrough becomes a sales asset the venue owns.
+
+3. Decor and rental marketplace. Once Gemini has produced a specific palette,
+   decor list and floral plan, every item in it is a purchasable object.
+   Affiliate or marketplace revenue on florists, rentals and stylists converts
+   the visualisation into a transaction, and is the highest-ceiling path.
+
+Defensibility
+-------------
+The capture pipeline is the moat, not the prompt. Getting a usable 3D
+reconstruction from a non-technical user is the hard part, and the video-to-
+frames approach removes the step that kills adoption - nobody will shoot 40-150
+overlapping photos by hand, but anyone can walk a room with the camera running.
+Accumulated venue reconstructions also compound: once a venue is captured, every
+future couple considering it can be sold instantly.
+
+Adjacent markets
+----------------
+The same capture-design-render loop applies with little change to event spaces,
+corporate functions, interior design, real estate staging and short-term rental
+listings. Weddings are the wedge because the emotional stakes and the budget are
+both unusually high.
