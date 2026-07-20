@@ -88,11 +88,16 @@ Backend file responsibilities (each owns one concern):
 | `backend/src/worker_client.rs` | the `Mock`/`Runpod` enum seam — how a job is handed to a GPU |
 | `backend/src/poller.rs` | background Tokio task nudging active jobs forward every 5s |
 
-Frontend structure: `app/page.tsx` (upload: drag-drop → client-side zip via JSZip
-→ PUT), `app/jobs/` (list + `[id]` status stepper polling via
-`lib/useJobPolling.ts`), `app/viewer/[id]` (iframe viewer). All API calls go
-through `lib/api.ts`, base URL = `NEXT_PUBLIC_API_URL`, default
-`http://localhost:8080`.
+Frontend structure (post-mockup rework): `app/page.tsx` (Upload — drag-drop →
+theme pick → client-side zip via JSZip → PUT), `app/jobs/` (Memories grid +
+`[id]` Processing stepper polling via `lib/useJobPolling.ts`),
+`app/viewer/[id]` (iframe scene + overlay chrome), `app/studio/page.tsx`
+(Gemini restyle screen), `components/AppShell.tsx` (nav). Client libs:
+`lib/api.ts` (all backend calls, base URL `NEXT_PUBLIC_API_URL`, default
+`http://localhost:8080`), `lib/theme.ts` (downscaling, `/api/analyze` +
+`/api/render` callers, job-keyed sessionStorage handoff to Studio),
+`lib/themes.ts` (6 authored preset themes), `lib/memory.ts` (per-job display
+title/gradient + localStorage meta).
 
 ## Docs map
 
@@ -146,45 +151,56 @@ VRAM, no multi-GPU.
   → Opus adversarial verifiers; 8 raw findings, 1 confirmed) caught a real
   race — in-flight Gemini responses landing on a swapped photo set — fixed via
   a `requestSeq` ref guard in `page.tsx`.
-- **Demo seeds: 3 `done` jobs live** (60ebff58…, 7f3bee9f…, 2edbfa03…, re-seeded
-  ~21:15 UTC after the docs push `40639bf` DID wipe the Railway DB — so even
-  docs-only pushes can trigger a rebuild; always verify + reseed after ANY push
-  via the session seed script).
+- **DEMO SEEDS: WIPED — 0 `done` jobs on the live backend (needs reseed).**
+  The `bfa806d` push rebuilt Railway and cleared SQLite. Reseed with
+  `bash <scratchpad>/seed-demo-jobs.sh` (session 6de23d68, ~30s, creates 3
+  jobs the mock poller walks to `done` in ~25s). User interrupted the reseed
+  at ~01:10 UTC — RUN IT before any demo. Rule: verify + reseed after EVERY
+  push (even docs-only pushes have triggered a Railway rebuild).
 - **Push freeze LIFTED (user call, ~21:05 UTC)** — pushes are fine anytime:
-  both platforms deploy zero-downtime, so the demo link never goes dark. Only
-  consequence of a backend-touching push is a Railway DB wipe → re-run the
-  seed script (`scratchpad/seed-demo-jobs.sh` of session 6de23d68, ~30s) and
-  the 4 demo scenes are back.
-- **UI MOCKUP REWORK IN PROGRESS (~21:45 UTC, uncommitted on disk)** — source
-  design: `WeddingAI-Prototype.html` at repo root (bundled artifact; extracted
-  markup at scratchpad `prototype-extracted.html`, session 6de23d68). Approved
-  plan: `/Users/mrbam/.claude/plans/unified-crunching-gadget.md`. User
-  decisions: all 5 screens; responsive (not fixed-width); demo flow = upload
-  photos → pick a PRE-WRITTEN theme (6 authored in `frontend/lib/themes.ts`) →
-  photos generated to match; photo-analysis stays as secondary path; Studio
-  "All out" mode REALLY loops /api/render over all session photos.
-  **DONE (build+lint green)**: `globals.css` (warm tokens: cream/paper/ink/
-  terra/sage etc. + mockup keyframes pulseDot/shimmerX/floatY/spinRing, light-
-  only), `layout.tsx` (+Cormorant Garamond via next/font, WeddingAI metadata),
-  `components/AppShell.tsx` (New/Memories/Studio nav pills), `lib/themes.ts`
-  (6 preset themes as full ThemeReport objects), `lib/memory.ts` (jobId→title/
-  gradient + localStorage meta), `lib/theme.ts` (+downscaleSet, sessionStorage
-  scene handoff saveSessionScene/loadSessionScene/sessionSceneSnapshot,
-  renderOne), `app/page.tsx` (Upload: preset chips + "design from photos" +
-  thumbnails; saves scene handoff + memory meta at create), `app/studio/
-  page.tsx` (NEW: scope one/all, mood chips, editable prompt, sequential real
-  render loop w/ progress + per-photo error tiles; useSyncExternalStore for
-  sessionStorage — lint forbids setState-in-effect),
-  `app/jobs/[id]/page.tsx` (Processing screen — written by a subagent, NOT
-  yet verified by me).
-  **STILL TO DO**: `app/jobs/page.tsx` (Memories card grid — still old table)
-  and `app/viewer/[id]/page.tsx` (viewer overlay chrome: ‹ Memories, serif
-  title, Share-copies-URL, ✦ Reimagine in Studio → /studio, orbit-hint pill,
-  pointer-events-none wrapper pattern) — spec in plan file §"Screens" 3+4;
-  then npm run build && lint, local walkthrough, push, RESEED (a push earlier
-  today wiped the DB: seeds now 3 done jobs 60ebff58…, 7f3bee9f…, 2edbfa03…).
-  A helper subagent doing jobs list+viewer DIED on the monthly spend limit
-  (user raised it $10; limit may bite again — prefer solo coding, no agents).
+  both platforms deploy zero-downtime, so the demo link never goes dark.
+- **UI MOCKUP REWORK SHIPPED + LIVE** (`d3ad453` build, `bfa806d` review
+  fixes; Vercel deploy verified live ~01:15 UTC: `/studio` → 200, homepage
+  says "Create a memory"). Source design: `WeddingAI-Prototype.html` at repo
+  root (untracked bundled artifact; extracted markup at scratchpad
+  `prototype-extracted.html`). Plan:
+  `/Users/mrbam/.claude/plans/unified-crunching-gadget.md`.
+  Five screens, all building + linting clean:
+  `app/page.tsx` Upload ("Create a memory": dropzone + real thumbnails, 6
+  preset theme chips from `lib/themes.ts`, secondary "let Gemini design from
+  my photos" = the spec-required structured-output path);
+  `app/jobs/[id]` Processing (vertical stepper, progress bar, shimmer panel);
+  `app/jobs/page.tsx` Memories (card grid, titles/gradients from
+  `lib/memory.ts`); `app/viewer/[id]` (iframe + overlay chrome, Share copies
+  URL, "✦ Reimagine in Studio"); `app/studio/page.tsx` NEW (scope one/all,
+  mood chips, editable prompt, REAL sequential `/api/render` loop with
+  progress + per-photo error tiles). Shell: `components/AppShell.tsx` nav,
+  `globals.css` warm tokens + mockup keyframes (light-only), Cormorant
+  Garamond + Geist in `layout.tsx`.
+- **Ultracode validation of the rework (2026-07-20 ~00:45 UTC)**: 5 Sonnet
+  finders → Opus adversarial verifiers, 20 agents; 15 raw findings, 11
+  confirmed, all FIXED in `bfa806d`. Load-bearing outcomes worth remembering:
+  - Studio handoff is now **keyed by job id** (`weddingai:scene:<id>`, old
+    entries pruned on save) and the viewer links `/studio?from=<id>` — before,
+    "Reimagine in Studio" silently used the LAST upload's photos for any
+    memory you opened.
+  - Studio gates its empty state on hydration (a refresh used to flash
+    "Nothing to restyle yet"), cancels in-flight renders on unmount via
+    AbortController, and distinguishes "wrong memory" from "never uploaded".
+  - `saveSessionScene` returns a boolean; `saveMemoryMeta` records
+    `studioReady` so a quota failure is explainable instead of silent.
+  - Upload: `designTheme` owns its `requestSeq` generation and only clears
+    busy when still current; photo input ignored while `busy` (the visible
+    set could diverge from the one actually uploading); thumbnail object URLs
+    minted in the event handler (Strict Mode double-invokes memo factories).
+  - Jobs list parses SQLite's UTC `created_at` as UTC (was showing tomorrow's
+    date every evening in PT).
+  - Processing keeps completed steps on failure instead of resetting to 0%.
+  - **Lint gotchas that WILL bite again**: `react-hooks/set-state-in-effect`
+    and "Cannot access refs during render" are ERRORS here. Use
+    `useSyncExternalStore` for client-only reads, adjust-state-during-render
+    for derived values, and event handlers for side effects.
+  - `useSearchParams` in a prerendered route needs a `<Suspense>` boundary.
 - Then: the afternoon image→3D run for the end-of-day complete submission.
 - CORS still permissive — restrict to the Vercel domain before judging.
 - **PRODUCT DEFINITION (user's words, 2026-07-19 ~20:45 UTC)**: "use the
@@ -204,49 +220,58 @@ VRAM, no multi-GPU.
   `frontend/app/page.tsx`. Locally needs `frontend/.env.local` — USER runs:
   `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`.
 
-## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-19 ~20:10 UTC)
+## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~01:15 UTC)
 
-A RunPod Phase 0 session is IN PROGRESS. Live facts a fresh session needs:
+RunPod pod is ALIVE and doing a **clean LichtFeld rebuild** (started 00:59 UTC).
 
-- **Pod**: RTX 5090 (32 GB, 32 vCPU, Ubuntu 24.04, CUDA 12.8.93 toolkit at
-  `/usr/local/cuda` — NOT on default SSH PATH), euro-3 datacenter.
-  **120 GB network volume at `/workspace` (persistent), 30 GB container disk.**
-- **SSH**: endpoint lives in `.env.pod` at the repo root (gitignored — CLAUDE.md
-  is pushed, so no live host/port here). It's the "exposed TCP" variant (supports
-  scp; the proxy variant does not). The endpoint dies with the pod; a replacement
-  pod gets new values (user pastes them into `.env.pod`).
-- **Build running**: `/workspace/phase0_build.sh` (runbook steps 2–4) in tmux
-  session `build`, log at `/workspace/build.log` with `=== ...===` UTC milestones
-  (check: `grep -E "^=== " /workspace/build.log | tail`). Started 19:36 UTC;
-  as of 21:11 UTC still in vcpkg deps (61 ports done, python3 in flight, active
-  CPU — healthy, not stuck; ETA for finished dist/bin ≈ 22:00–23:30 UTC, fine
-  for the afternoon run).
-  **DEADLINE CORRECTION (user, ~20:48 UTC): 2:30 PM PT is only the IN-PERSON
-  demo; the complete submission is due END OF DAY.** So: the 2:30 demo ships on
-  the mock pipeline, and the REAL run happens this afternoon — **KEEP THE POD
-  RUNNING through the demo** (overrides the earlier terminate-at-2:00 note; the
-  build must finish for the afternoon session). Afternoon plan ("rough is fine"
-  per user): COLMAP on ORIGINAL photos for consistent poses → Gemini-restyle
-  20–40 of them with one fixed theme prompt → train LichtFeld on the restyled
-  images (-i 7000 first) → convert to scene.html → scp down → commit to
-  frontend/public/ + point a job's artifacts_json at it → push + re-run the
-  seed script. If the pod dies mid-build, rerun `/workspace/phase0_build.sh`
-  (idempotent, vcpkg caches on the volume). Deliberate
-  deviations from the runbook: `-j16` and `VCPKG_MAX_CONCURRENCY=16` (60 GB RAM
-  OOM guard on 32 cores).
-- **COLMAP already installed** (runbook step 5 DONE, in parallel): `/usr/bin/colmap`,
-  log at `/workspace/colmap_install.log`.
-- **When build finishes**: `/workspace/dist/bin/run_lichtfeld.sh --help` is the
-  sanity check AND the first-ever Blackwell/5090 JIT test (docs never mention
-  Blackwell; escape hatch = rent a 4090 in euro-3, same volume, same PTX binary).
-- **Next**: runbook steps 6–11 — scp photos (40–60 of one place) to
-  `/workspace/project/images`, SfM, train (`-i 7000` first to bank a result,
-  then 30k if time allows), `convert` to .html/.sog, scp down, RECORD all timings
-  in `docs/phase0-notes.md`. User has ~1-hour windows — bank results early.
-- **Iron rule**: end of session = TERMINATE THE POD, KEEP THE VOLUME. The build
-  and all data live on `/workspace` and survive. Idle pods bill ~$1/hr.
+- **Pod**: RTX 5090 (32 GB, 32 vCPU, Ubuntu 24.04, CUDA 12.8.93 at
+  `/usr/local/cuda`, NOT on default SSH PATH), euro-3. 120 GB network volume
+  at `/workspace` (MooseFS, persistent), 30 GB container disk.
+- **SSH**: `.env.pod` at repo root (gitignored). Variable names are
+  `POD_SSH_USER / POD_SSH_HOST / POD_SSH_PORT / POD_SSH_KEY` — connect with
+  `ssh -i "$POD_SSH_KEY" -p "$POD_SSH_PORT" "$POD_SSH_USER@$POD_SSH_HOST"`.
+  On macOS also `export PATH=/usr/bin:/bin:...` first — this shell's default
+  PATH lacks curl/ssh/grep.
+- **THE 2-HOUR FIRST RUN BUILT NOTHING.** 19:36→21:54 UTC was entirely vcpkg
+  deps; LichtFeld's own configure then FAILED on a missing system package
+  (`libgtk-3-dev`, required by `cmake/SetupNativeFileDialog.cmake` for the NFD
+  GTK backend). The script has **no `set -e`**, so it fell through configure →
+  build → install → "SANITY CHECK FAILED", which masked the real cause. Fixed
+  by `apt-get install -y libgtk-3-dev` (done, gtk 3.24.41 present).
+- A second relaunch inherited the half-generated build tree and died instantly
+  with `fatal error: opening dependency file ... .o.d: No such file or
+  directory`. Fix: **wipe `/workspace/LichtFeld-Studio/build` and reconfigure**
+  (done 00:59 UTC).
+- **The vcpkg binary cache is at `/root/.cache/vcpkg/archives` (1.3 GB, 74
+  ports) — OUTSIDE the build tree**, so wiping `build/` does NOT repeat the
+  2-hour dependency phase; ports restore from cache. (It is on the CONTAINER
+  disk, so it dies with the pod — the volume keeps sources only.)
+- **Current run**: tmux session `build`, log `/workspace/build3.log` (the
+  script does NOT self-redirect — always launch as
+  `tmux new-session -d -s build "bash /workspace/phase0_build.sh > /workspace/buildN.log 2>&1"`,
+  or the output is lost when the session ends). Check with
+  `grep -E "^=== " /workspace/build3.log | tail` and
+  `grep -oE "\[[0-9]+/[0-9]+\]" /workspace/build3.log | tail -1` (ninja).
+  Success = `/workspace/dist/bin/run_lichtfeld.sh` exists (also the first-ever
+  Blackwell/5090 JIT test; escape hatch = rent a 4090 in euro-3, same volume).
+- **PHOTO DATA (user pasted 2026-07-20 ~00:40 UTC)**: `photos-inbox/` at repo
+  root (gitignored) holds `Location-1/` (6 JPEGs, 5712×4284) and `Location-2/`
+  (7 JPEGs, 1024×768). **This is far too few for a real splat** — COLMAP +
+  LichtFeld want 40–150 photos of ONE place with good overlap; 6–7 views will
+  not reconstruct. Uses that DO work with this set: the demo "sample venue"
+  button, theme-analysis and render demos, screenshots. **A real 3D run needs
+  the user to shoot/supply a proper walkthrough set of one room.** Also
+  pre-resize before training (max 4096px, `--max-width` default 3840).
+- **Iron rule**: end of session = TERMINATE THE POD, KEEP THE VOLUME. Idle
+  pods bill ~$1/hr. Note the vcpkg binary cache does NOT survive termination.
 
 ## Rules that override defaults
+
+- **DESKTOP ONLY (user call, 2026-07-19 ~17:55 PT)**: this is a prototype for a
+  laptop-projected demo and desktop screenshots. Do NOT spend time on mobile
+  layout, phone breakpoints, or touch affordances. Existing responsive classes
+  can stay (they're already written and passing), but no new mobile work, and
+  don't report mobile-only issues as defects.
 
 - **Next.js version warning**: `frontend/AGENTS.md` (included by
   `frontend/CLAUDE.md`) — this Next.js (16.2.10) has breaking changes vs. training

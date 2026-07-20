@@ -50,8 +50,18 @@ build + lint green, smoke-tested on a local prod server.
 - [x] Viewer chrome: back/Share/orbit-hint overlays, ✦ Reimagine in Studio
 - [x] Studio (/studio): scope one/all, mood chips, editable prompt, REAL
       sequential /api/render loop with progress + per-photo error tiles
-- [ ] PUSH after the in-person demo wraps (user chose: demo runs on the old
-      deployed UI) → verify Vercel deploy → reseed demo jobs if Railway wiped
+- [x] Pushed (`d3ad453`) and validated by an ultracode fleet (15 raw findings,
+      11 confirmed, all fixed in `bfa806d`). Vercel deploy verified live.
+- [ ] **RESEED the demo jobs** — the push wiped Railway's DB, live count is 0.
+
+## 1.6 Real 3D run (BLOCKED on photo data)
+
+- [ ] Pod is doing a clean LichtFeld rebuild (see CLAUDE.md Phase 0). Once
+      `dist/bin/run_lichtfeld.sh` exists: COLMAP → train → `convert` to
+      scene.html → scp down → `frontend/public/` + point a job's
+      artifacts_json at it.
+- [ ] **Need a proper photo set**: `photos-inbox/` has only 6 + 7 photos of
+      two locations; a splat needs 40–150 views of ONE place with overlap.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 
