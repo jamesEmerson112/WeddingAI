@@ -61,10 +61,13 @@ FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS build
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS runtime
 
 # TODO(Phase 1) 6. Runtime OS deps: python3 + pip, colmap runtime libraries,
-#   and any shared libs LichtFeld links at runtime (the -dev packages from
-#   stage 1 are build-only and must NOT be dragged in here — keep this lean).
+#   ffmpeg, and any shared libs LichtFeld links at runtime (the -dev packages
+#   from stage 1 are build-only and must NOT be dragged in here — keep it lean).
+#   ffmpeg is for handler.py step 2b: turning an uploaded walkthrough video into
+#   evenly spaced frames for COLMAP. ~60 MB installed, worth it — shooting
+#   40-150 stills by hand is impractical, a 45-90s orbit is the same coverage.
 # RUN apt-get update && apt-get install -y --no-install-recommends \
-#     python3 python3-pip <colmap-runtime-libs> \
+#     python3 python3-pip ffmpeg <colmap-runtime-libs> \
 #     && rm -rf /var/lib/apt/lists/*
 
 # TODO(Phase 1) 7. Copy the built binaries from stage 1.

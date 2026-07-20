@@ -74,7 +74,20 @@ build + lint green, smoke-tested on a local prod server.
       downscale (5760→3840 keeping aspect), and all four guard paths.
       Bonus over hand-shot photos: one camera = one set of intrinsics, which
       COLMAP prefers.
-- [ ] Shoot a 45–90s slow orbit of one room and run the script on it.
+- [x] **Video upload works in the deployed product**: `frontend/lib/frames.ts`
+      extracts ~110 frames in-browser (`<video>`+`<canvas>`) and feeds them to
+      the existing JSZip → PUT → job path, so no backend/worker change was
+      needed. Upload size is fine — `backend/src/routes.rs:34-37` already caps
+      the mock sink at 500 MB and the PUT goes straight to Railway (never
+      through Vercel's 4.5 MB serverless limit). Progress row + abort/supersede
+      guards on `app/page.tsx`. Build + lint green.
+- [x] `worker/Dockerfile` + `handler.py` step 2b: ffmpeg frame extraction
+      documented for the GPU path (blueprint only — neither builds yet).
+- [ ] **Smoke-test with a REAL phone video** (not yet done): drop it on `/`,
+      measure extraction wall-time and zip size. If it's too slow to demo,
+      lower `TARGET_FRAMES`/`MAX_WIDTH` in `frames.ts` — single constants.
+      Also worth testing an HEVC clip to confirm the friendly error path.
+- [ ] Shoot a 45–90s slow orbit of one room and run the pipeline on it.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 

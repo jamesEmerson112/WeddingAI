@@ -53,6 +53,25 @@ def handler(event):
     #   - unzip /work/photos.zip -> /work/project/images/
     #   - Guardrails: reject if too few images / zip too large (cost control).
 
+    # TODO(Phase 1) 2b. VIDEO -> FRAMES: if the upload is a video rather than a
+    #   zip of stills, extract frames before COLMAP sees it. Shooting 40-150
+    #   photos by hand is impractical; a 45-90s slow orbit is the same coverage.
+    #   - ffmpeg -i input.mp4 -vf "fps={N},scale=1920:-2" -q:v 2 \
+    #         images/frame_%04d.jpg
+    #   - Pick N so the frame count lands in 40-150 (N = target / duration), the
+    #     same band scripts/video-to-frames.sh and frontend/lib/frames.ts use.
+    #     Keep all three in agreement — they are three implementations of one
+    #     decision.
+    #   - Fixed rate on purpose: COLMAP wants EVENLY SPACED overlap. Scene
+    #     detection optimises for visual change, thinning out exactly the slow,
+    #     dense passes that reconstruct best.
+    #   - Motion blur is the top failure mode for video-derived splats. If COLMAP
+    #     registers only a fraction of the frames, suspect blur before geometry.
+    #   - NOTE: the deployed frontend ALREADY extracts frames in-browser
+    #     (frontend/lib/frames.ts), so uploads arriving from the web app are
+    #     always a zip of stills. This step is for direct/API video uploads and
+    #     for videos the browser cannot decode (HEVC outside Safari).
+
     # TODO(Phase 1) 3. COLMAP SfM: recover camera poses + sparse point cloud.
     #   - progress_update(event, "sfm")
     #   - colmap feature_extractor --database_path db.db --image_path images

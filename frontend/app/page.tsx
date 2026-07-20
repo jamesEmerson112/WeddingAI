@@ -12,6 +12,7 @@ import {
 } from "@/lib/theme";
 import { PRESET_THEMES } from "@/lib/themes";
 import { saveMemoryMeta } from "@/lib/memory";
+import { extractFrames, isVideoFile } from "@/lib/frames";
 
 // How many training iterations to request for a new job. 7000 is a reasonable
 // default for a quick splat; the backend accepts this as the `iters` field.
@@ -53,25 +54,78 @@ export default function UploadPage() {
     return () => thumbs.forEach((u) => URL.revokeObjectURL(u));
   }, [thumbs]);
 
+  // Video → frames progress, null when no extraction is running.
+  const [extracting, setExtracting] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const extractAbort = useRef<AbortController | null>(null);
+  // Decoding a whole video is long-running; don't leave it decoding into a
+  // canvas that no longer has a page.
+  useEffect(() => () => extractAbort.current?.abort(), []);
+
   const totalMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
-  const busy = stage === "zipping" || stage === "uploading" || stage === "creating";
+  const busy =
+    stage === "zipping" ||
+    stage === "uploading" ||
+    stage === "creating" ||
+    extracting !== null;
   const goodOverlap = files.length >= 24;
 
-  // Keep only image files from a dropped or picked selection. Ignored while a
-  // memory is being created: that flow captured the old set, so swapping the
-  // visible photos now would show a set the job isn't actually using.
-  function addFiles(list: FileList | null) {
-    if (!list || busy) return;
-    const images = Array.from(list).filter((f) => f.type.startsWith("image/"));
+  // Adopt a new photo set. The [thumbs] effect above revokes the previous
+  // batch's object URLs when this replaces them, so there's nothing to free
+  // here.
+  function applyImages(images: File[]) {
     setFiles(images);
-    thumbs.forEach((u) => URL.revokeObjectURL(u));
     setThumbs(images.slice(0, THUMB_LIMIT).map((f) => URL.createObjectURL(f)));
-    requestSeq.current++;
+  }
+
+  // Accept either a photo set or a single walkthrough video — a video is
+  // decoded to evenly spaced frames here, then travels the identical path
+  // (zip → upload → job), so nothing downstream knows the difference.
+  //
+  // Ignored while a memory is being created: that flow captured the old set,
+  // so swapping the visible photos now would show a set the job isn't using.
+  async function addFiles(list: FileList | null) {
+    if (!list || busy) return;
+    const picked = Array.from(list);
+
+    // Own this generation so a second drop supersedes a slow extraction.
+    const myReq = ++requestSeq.current;
     setThemeError(null);
     setThemeCached(false);
+    setError(null);
     // A preset theme survives a photo swap; a Gemini-designed one was about
     // THOSE photos and no longer applies.
     setSelection((sel) => (sel?.source === "gemini" ? null : sel));
+
+    const video = picked.find(isVideoFile);
+    if (!video) {
+      applyImages(picked.filter((f) => f.type.startsWith("image/")));
+      return;
+    }
+
+    extractAbort.current?.abort();
+    const controller = new AbortController();
+    extractAbort.current = controller;
+
+    applyImages([]);
+    setExtracting({ done: 0, total: 0 });
+    try {
+      const frames = await extractFrames(video, {
+        signal: controller.signal,
+        onProgress: (done, total) => {
+          if (requestSeq.current === myReq) setExtracting({ done, total });
+        },
+      });
+      if (requestSeq.current !== myReq) return;
+      applyImages(frames);
+    } catch (e) {
+      // A supersede or unmount aborts on purpose — not worth an error banner.
+      if (requestSeq.current !== myReq || (e as Error)?.name === "AbortError") return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (requestSeq.current === myReq) setExtracting(null);
+    }
   }
 
   function pickPreset(report: ThemeReport) {
@@ -158,8 +212,9 @@ export default function UploadPage() {
     }
   }
 
-  const buttonLabel =
-    stage === "zipping"
+  const buttonLabel = extracting
+    ? "Extracting frames…"
+    : stage === "zipping"
       ? "Zipping photos…"
       : stage === "uploading"
         ? "Uploading…"
@@ -179,8 +234,9 @@ export default function UploadPage() {
           Create a memory
         </h1>
         <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-taupe">
-          Add your photos, pick the vibe of your day, and we&rsquo;ll rebuild it
-          as a 3D space — styled to a palette that matches your theme.
+          Add your photos — or just walk the room with your camera rolling —
+          pick the vibe of your day, and we&rsquo;ll rebuild it as a 3D space,
+          styled to a palette that matches your theme.
         </p>
       </div>
 
@@ -206,20 +262,45 @@ export default function UploadPage() {
               ✧
             </div>
             <div className="text-[15px] font-medium text-ink">
-              Drag your photos here, or{" "}
+              Drag your photos or a video here, or{" "}
               <span className="font-semibold text-terra underline">browse</span>
             </div>
             <div className="mt-1 text-xs text-fawn">
-              JPG or HEIC · 40–150 photos of one place
+              40–150 photos of one place — or a 45–90s slow orbit video
             </div>
             <input
               type="file"
               multiple
-              accept="image/*"
+              accept="image/*,video/*"
               className="hidden"
               onChange={(e) => addFiles(e.target.files)}
             />
           </label>
+
+          {/* Video → frames. Decoding is the slow part, so show real counts. */}
+          {extracting && (
+            <div className="mt-4 rounded-xl border border-ink/10 bg-card px-4 py-3">
+              <div className="flex items-center justify-between text-[13px] font-medium text-clay">
+                <span className="flex items-center gap-2">
+                  <span className="size-[7px] animate-pulse-dot rounded-full bg-terra" />
+                  Extracting frames from your video…
+                </span>
+                <span className="font-mono text-xs text-fawn">
+                  {extracting.total ? `${extracting.done}/${extracting.total}` : "reading…"}
+                </span>
+              </div>
+              <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-ink/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-[#c98f86] to-terra transition-[width] duration-300 ease-out"
+                  style={{
+                    width: extracting.total
+                      ? `${(extracting.done / extracting.total) * 100}%`
+                      : "0%",
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {files.length > 0 && (
             <>

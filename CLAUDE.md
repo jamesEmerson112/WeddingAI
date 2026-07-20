@@ -88,8 +88,21 @@ Backend file responsibilities (each owns one concern):
 | `backend/src/worker_client.rs` | the `Mock`/`Runpod` enum seam — how a job is handed to a GPU |
 | `backend/src/poller.rs` | background Tokio task nudging active jobs forward every 5s |
 
-Frontend structure (post-mockup rework): `app/page.tsx` (Upload — drag-drop →
-theme pick → client-side zip via JSZip → PUT), `app/jobs/` (Memories grid +
+**Video is a first-class input.** A splat needs 40–150 overlapping views, which
+is impractical to shoot by hand, so a 45–90s slow orbit video works anywhere
+photos do. Three implementations of ONE decision — keep them in agreement:
+`frontend/lib/frames.ts` (in-browser `<video>`+`<canvas>`, runs before the
+existing JSZip step so **no backend or worker change was needed**),
+`scripts/video-to-frames.sh` (ffmpeg, for local/manual runs), and
+`worker/handler.py` step 2b (ffmpeg, blueprint only). All three sample at a
+FIXED rate targeting ~110 frames clamped to 40–150 — scene detection would thin
+out exactly the slow, dense, high-overlap passes that reconstruct best.
+Caveats: motion blur is the top failure mode; and iPhone HEVC often won't decode
+outside Safari, so the browser path fails with a message pointing at the script.
+
+Frontend structure (post-mockup rework): `app/page.tsx` (Upload — drag-drop
+photos **or a video** → theme pick → client-side zip via JSZip → PUT),
+`app/jobs/` (Memories grid +
 `[id]` Processing stepper polling via `lib/useJobPolling.ts`),
 `app/viewer/[id]` (iframe scene + overlay chrome), `app/studio/page.tsx`
 (Gemini restyle screen), `components/AppShell.tsx` (nav). Client libs:
