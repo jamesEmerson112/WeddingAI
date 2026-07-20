@@ -44,8 +44,13 @@ next-env.d.ts
 # Generated from photos-inbox/ by scripts/build-samples.mjs on predev/prebuild.
 /public/samples/
 
-# Real LichtFeld scene exports dropped here for local viewing. These are tens of
-# MB — the tracked /public/demo/scene.html placeholder is the only scene that
-# belongs in git. A 16 MB export already got swept into history (d6e5e04) and is
-# stuck there permanently; serve real scenes from object storage instead.
+# Real LichtFeld scene exports are tens of MB, so they stay out of git by
+# default — a 16 MB export already got swept into history (d6e5e04) and is stuck
+# there permanently. Serve new ones from object storage rather than committing.
 /public/demo/scene-*.html
+
+# Deliberate exception: this one example reconstruction IS committed (30.7 MB) so
+# the deployed demo can show a real scene instead of the placeholder. A conscious
+# trade of repo weight for a working public demo — not a precedent. Anything
+# beyond this single file should go to a bucket.
+!/public/demo/scene-3041.html

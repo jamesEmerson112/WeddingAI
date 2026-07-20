@@ -2,8 +2,27 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listJobs, type Job } from "@/lib/api";
-import { memoryGradient, memoryMeta, memoryTitle } from "@/lib/memory";
+import { listJobs, sceneKind, sceneUrl, type Job } from "@/lib/api";
+import {
+  EXAMPLE_SCENE_TITLE,
+  memoryGradient,
+  memoryMeta,
+  memoryTitle,
+} from "@/lib/memory";
+
+// A card's title must match what opening it actually shows. The mock poller
+// stamps the SAME placeholder scene_url on every completed job, so — with no
+// NEXT_PUBLIC_DEMO_SCENE_URL override — every "done" job in this grid
+// resolves to the one committed example scene (see lib/api.ts's sceneKind()).
+// Without this, a card could read "Golden Hour Vows" and open into a viewer
+// titled "My Startup Office", which looks like a bug rather than an honest
+// substitution. The thumbnail gradient is left varied on purpose — it's
+// decorative and makes no factual claim, unlike the title.
+function cardTitle(job: Job): string {
+  return sceneKind(sceneUrl(job)) === "example"
+    ? EXAMPLE_SCENE_TITLE
+    : memoryTitle(job.id);
+}
 
 // Status pill for a memory card: done → sage "Ready", failed → red,
 // anything in between → amber "Training".
@@ -132,7 +151,7 @@ export default function JobsPage() {
                 <div className="px-4 pt-3.5 pb-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="truncate font-serif text-xl font-semibold text-ink">
-                      {memoryTitle(job.id)}
+                      {cardTitle(job)}
                     </div>
                     <span
                       className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold ${p.cls}`}

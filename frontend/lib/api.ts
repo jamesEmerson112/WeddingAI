@@ -97,24 +97,28 @@ export async function listJobs(): Promise<Job[]> {
 // The exact placeholder URL the mock poller stamps on every completed job
 // (backend/src/poller.rs). This is the ONLY value that counts as "not a real
 // scene" — compared with strict equality, never a prefix/startsWith check. A
-// real export is either an absolute R2 URL (worker/handler.py) or, for local
-// demoing, a real scene file served from the same /demo/ directory (see
-// DEMO_SCENE_OVERRIDE below), so "starts with /demo/" would wrongly flag a
+// real export is either an absolute R2 URL (worker/handler.py) or the
+// committed example scene below, so "starts with /demo/" would wrongly flag a
 // genuine reconstruction as the stand-in. Keep this string and its one use in
 // isPlaceholderScene() as the single source of truth.
 const PLACEHOLDER_SCENE_URL = "/demo/scene.html";
 
-// Optional local override for demoing a real LichtFeld export without
-// touching the backend. The mock poller always stamps PLACEHOLDER_SCENE_URL;
-// if NEXT_PUBLIC_DEMO_SCENE_URL is set, sceneUrl() swaps that placeholder for
-// the given path (e.g. "/demo/scene-3041.html", a real export dropped in
-// public/demo/ — see frontend/.gitignore's /public/demo/scene-*.html rule).
-// It only ever replaces the exact placeholder, never a real backend/worker
-// scene_url, so it can't accidentally mask a genuine job's scene.
-// Unset by default: frontend/.env.example ships the key empty, and .env is
-// gitignored, so a fresh clone has no override and falls straight through to
-// the tracked placeholder scene.html — which exists in git — never a 404.
-const DEMO_SCENE_OVERRIDE = process.env.NEXT_PUBLIC_DEMO_SCENE_URL || null;
+// A real LichtFeld Studio export, committed to the repo (30.7 MB —
+// public/demo/scene-3041.html, see frontend/.gitignore's explicit exception
+// carved out for this one file) so the deployed Vercel site has a genuine
+// reconstruction to show with no dashboard step required on a fresh clone.
+// IMPORTANT: it is ONE FIXED scene (the author's apartment) reused for every
+// mock job — never treat it as if it came from any particular upload. See
+// sceneKind() below, which exists specifically so callers can't forget this.
+const EXAMPLE_SCENE_URL = "/demo/scene-3041.html";
+
+// What sceneUrl() substitutes in for PLACEHOLDER_SCENE_URL. Defaults to the
+// committed EXAMPLE_SCENE_URL, so the substitution works out of the box with
+// zero environment configuration. NEXT_PUBLIC_DEMO_SCENE_URL still overrides
+// it when set — e.g. to point at a scene hosted in a bucket later, or,
+// deliberately, back to PLACEHOLDER_SCENE_URL itself to disable the swap and
+// show the honest stand-in again.
+const DEMO_SCENE_URL = process.env.NEXT_PUBLIC_DEMO_SCENE_URL || EXAMPLE_SCENE_URL;
 
 // Pull the viewable scene URL out of a finished job.
 // artifacts_json is a JSON string the backend stamps on completion, e.g.
@@ -125,8 +129,8 @@ export function sceneUrl(job: Job): string | null {
   try {
     const artifacts = JSON.parse(job.artifacts_json) as { scene_url?: string };
     const url = artifacts.scene_url ?? null;
-    if (url === PLACEHOLDER_SCENE_URL && DEMO_SCENE_OVERRIDE) {
-      return DEMO_SCENE_OVERRIDE;
+    if (url === PLACEHOLDER_SCENE_URL) {
+      return DEMO_SCENE_URL;
     }
     return url;
   } catch {
@@ -134,10 +138,36 @@ export function sceneUrl(job: Job): string | null {
   }
 }
 
-// Precise placeholder check for the viewer: true only for the exact mock
-// stand-in URL, never for a prefix match. See PLACEHOLDER_SCENE_URL above for
-// why prefix matching (e.g. startsWith("/demo/")) is wrong here — a real
-// export can also be served from /demo/ locally via DEMO_SCENE_OVERRIDE.
+// Precise placeholder check: true only for the exact mock stand-in URL, never
+// a prefix match. See PLACEHOLDER_SCENE_URL above for why prefix matching
+// (e.g. startsWith("/demo/")) is wrong here — the committed example export
+// also lives under /demo/.
 export function isPlaceholderScene(url: string | null): boolean {
   return url === PLACEHOLDER_SCENE_URL;
+}
+
+// The three states a resolved scene URL (sceneUrl()'s return value) can be
+// in, and the one place that tells them apart — so components branch on this
+// instead of comparing URL string literals themselves:
+//  - "placeholder": the literal PLACEHOLDER_SCENE_URL, unmodified. Normally
+//    unreachable, since sceneUrl() always swaps it for DEMO_SCENE_URL; only
+//    resurfaces if NEXT_PUBLIC_DEMO_SCENE_URL is explicitly set back to that
+//    same path. Gets the honest "stand-in" caption, no orbit hints.
+//  - "example": DEMO_SCENE_URL substituted in for a mock job — the committed
+//    real reconstruction by default. The orbit controls are genuinely real,
+//    but it is the SAME FIXED scene for every mock job, not built from
+//    whatever the viewer uploaded. Callers MUST show a plain label saying so
+//    — it must never be mistaken for the viewer's own result.
+//  - "real": anything else — a genuine per-job scene_url from an actual
+//    worker (an absolute R2 URL, worker/handler.py). Orbit hints, no example
+//    label — this one really was built from the viewer's own photos.
+// Returns null for a null input (no scene yet), so callers can keep handling
+// "not ready" themselves rather than folding it into this type.
+export type SceneKind = "placeholder" | "example" | "real";
+
+export function sceneKind(url: string | null): SceneKind | null {
+  if (url === null) return null;
+  if (isPlaceholderScene(url)) return "placeholder";
+  if (url === DEMO_SCENE_URL) return "example";
+  return "real";
 }
