@@ -69,8 +69,11 @@ build + lint green, smoke-tested on a local prod server.
       UNPUSHED — pushing before Railway Postgres exists takes the backend down).
 - [ ] **USER: provision Railway Postgres**, set backend `DATABASE_URL` to
       `${{Postgres.DATABASE_URL}}`, then push + reseed.
-- [ ] Phase 2: attach `/data` volume; persist the upload zip + the ≤8 downscaled
-      photos; `photos` table; GET/POST photo routes.
+- [ ] Phase 2: persist the upload zip + the ≤8 downscaled photos; `photos`
+      table; GET/POST photo routes. **Use a Railway BUCKET, not a volume** —
+      S3-compatible, free egress, no 5 GB / no-replicas limits, and it matches
+      the R2_* env stubs + presigning TODO the repo already has (see CLAUDE.md
+      "STORAGE FOR IMAGE BYTES"). Needs `aws-sdk-s3` added to Cargo.toml.
 - [ ] Phase 3: real gallery thumbnails (replacing the CSS gradient at
       `frontend/app/jobs/page.tsx:129`) + Studio loading any past memory.
 - [x] Photo decision (user, ~01:40 UTC): **try the 6–7 views we already have

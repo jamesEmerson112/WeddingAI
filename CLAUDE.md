@@ -157,6 +157,28 @@ VRAM, no multi-GPU.
   `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` — the obvious
   `CURRENT_TIMESTAMP` would break every date in the Memories grid, because
   `frontend/app/jobs/page.tsx` regex-matches SQLite's exact format to parse UTC.
+- **STORAGE FOR IMAGE BYTES — prefer a Railway BUCKET over a Railway VOLUME**
+  (researched 2026-07-20 ~04:50 UTC; supersedes the earlier volume plan):
+  - Railway **Buckets** are private, fully **S3-compatible** object storage,
+    `$0.015/GB-month` with **unlimited free egress and free S3 API ops**.
+    Credentials live in the bucket's **Credentials** tab. Private by default —
+    serve files via presigned URLs or proxy them through the backend.
+    Created from `+ New` → **Bucket** (it IS in the Add-New-Service menu).
+  - Railway **Volumes** are NOT in that menu — a volume is not a service. You
+    attach one to an EXISTING service (right-click the service on the canvas,
+    or the service's Settings → Volumes; `Cmd+K` → "attach volume" also works).
+    Hard limits: **0.5 GB free / 5 GB Hobby / 50 GB Pro**, **one volume per
+    service**, and **replicas cannot be used with volumes at all**.
+  - **Why Bucket wins here**: the repo is ALREADY built for an S3-compatible
+    store — `backend/.env.example` stubs `R2_ENDPOINT / R2_ACCESS_KEY_ID /
+    R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_PUBLIC_BASE`, `routes.rs:97-104` has
+    the presigning TODO where the 501 lives, and `ROADMAP.md:13` locks
+    "Artifacts: Cloudflare R2 (S3-compatible)". A Railway Bucket is that same
+    shape, hosted next to the backend. Those five env vars map 1:1 — no rename
+    needed, just fill them from the Credentials tab.
+  - **Cost of Bucket over Volume**: needs an S3 SDK (`aws-sdk-s3`, currently NOT
+    in `Cargo.toml`) plus presigning code, vs. a volume's trivial `std::fs`.
+    That is the only reason a volume was ever attractive.
 - **Local dev now REQUIRES a database**: `docker compose up -d` from `backend/`.
   Postgres has no `sqlite::memory:` equivalent, so `cargo run` AND `cargo test`
   both need a live server (CI got a Postgres service container). Tests each get
