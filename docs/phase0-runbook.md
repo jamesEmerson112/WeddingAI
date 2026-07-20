@@ -85,8 +85,9 @@ scp -P <port> -r ./my_photos root@<pod-ip>:/workspace/project/images
 ```bash
 cd /workspace/project
 time colmap feature_extractor --database_path db.db --image_path images \
-  --ImageReader.single_camera 1 --SiftExtraction.use_gpu 1
-time colmap exhaustive_matcher --database_path db.db --SiftMatching.use_gpu 0
+  --ImageReader.single_camera 1 --SiftExtraction.use_gpu 0
+time colmap exhaustive_matcher --database_path db.db \
+  --SiftMatching.use_gpu 0 --SiftMatching.max_num_matches 32768
 # for an ordered walkthrough instead:  colmap sequential_matcher --database_path db.db
 mkdir -p sparse
 time colmap mapper --database_path db.db --image_path images --output_path sparse
@@ -100,9 +101,40 @@ Two flags that are not optional here, both learned the hard way (2026-07-20):
   split into unrelated intrinsics groups, which wrecks an already-small set.
   Frames from a single video are uniform, so this is free insurance; for hand-shot
   photos it is essential.
-- **`--SiftMatching.use_gpu 0`** — the GPU matcher **core-dumps** on this pod
-  (`Aborted (core dumped)`, apt COLMAP on the RTX 5090). CPU matching is fine at
-  these set sizes. Feature *extraction* on GPU works; only matching crashes.
+- **`--SiftExtraction.use_gpu 0` AND `--SiftMatching.use_gpu 0`** — COLMAP's GPU
+  SIFT goes through Qt/OpenGL and this pod has no usable GL context, so *both*
+  stages core-dump on GPU:
+  `qt.qpa.xcb: could not connect to display` → `SIGABRT`. `QT_QPA_PLATFORM=offscreen`
+  does **not** fix it. CPU is fine at these set sizes (151 frames extracted in
+  well under a minute).
+  ⚠️ Beware a `cmd --use_gpu 1 || cmd --use_gpu 0` fallback: it hides the crash
+  and makes GPU look like it worked. That mistake was made and corrected here.
+- **`--SiftMatching.max_num_matches 32768`** — on the CPU path this defaults
+  from a GPU-derived value and lands at 0, aborting with
+  `Check failed: max_num_matches > 0 (0 vs. 0)`. Must be set explicitly.
+
+### Tuning for low-resolution or motion-blurred video frames
+
+Phone video is often 720p and always has some motion blur. Default SIFT settings
+find far too few features on it — a symptom worth checking before blaming the
+mapper:
+
+```bash
+# average keypoints per image; under ~1000 means extraction is starving
+python3 -c "import sqlite3;c=sqlite3.connect('db.db');n=list(c.execute('SELECT COUNT(*),SUM(rows) FROM keypoints'))[0];print(n[1]//n[0])"
+```
+
+```bash
+colmap feature_extractor --database_path db.db --image_path images \
+  --ImageReader.single_camera 1 --SiftExtraction.use_gpu 0 \
+  --SiftExtraction.first_octave -1 \        # upsample 2x before extracting
+  --SiftExtraction.peak_threshold 0.0022 \  # 1/3 of default
+  --SiftExtraction.max_num_features 16384
+```
+
+Measured on a 720x1280 handheld walkthrough: **725 → 1731 keypoints/image**.
+Use `exhaustive_matcher` rather than `sequential_matcher` when the camera
+revisits spaces — loop closures are what merge fragments into one model.
 
 Check registration before spending GPU time on training:
 
