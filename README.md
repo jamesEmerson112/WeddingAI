@@ -9,6 +9,14 @@ an empty venue, uses **Google Gemini** to design a wedding theme from that
 specific room and to render the room restyled in that theme, and builds toward a
 3D scene you can move through.
 
+![A real Gaussian-splat reconstruction, orbiting a desk](docs/assets/demo-scene-desk.gif)
+
+*A real 3D Gaussian Splatting reconstruction — 1.5M splats, built from a
+42-second handheld phone video and trained on a rented RTX 5090 (details in
+"Honest status" below). This is what the pipeline produces when run manually,
+not something the deployed app generates today — the deployed app still hands
+back a placeholder scene while the video→3D hop gets wired in.*
+
 ---
 
 ## Product overview
@@ -142,6 +150,12 @@ with `failed` reachable from any state.
 `backend/src/state.rs` selects `WorkerClient::Mock` or `WorkerClient::Runpod`
 from `MOCK_MODE`.
 
+![A real Gaussian-splat reconstruction, orbiting a kitchen counter](docs/assets/demo-scene-counter.gif)
+
+*Output of the `COLMAP → LichtFeld` path above, run manually on a rented GPU —
+see "Honest status" for the exact numbers and for what the deployed app
+actually does today.*
+
 | Path | Owns |
 |---|---|
 | `frontend/app/api/analyze`, `api/render` | the two Gemini capabilities (server-side) |
@@ -158,17 +172,33 @@ from `MOCK_MODE`.
 So judges know exactly what they are looking at:
 
 - ✅ **Gemini theme design is live**, running against real uploaded photos.
-- ✅ **Gemini venue restyling is live.**
+- ⚠️ **Gemini venue restyling is implemented but currently blocked on quota.**
+  The route (`/api/render`, `gemini-2.5-flash-image`) is complete and correct —
+  server-side, schema-validated theme in, rendered image out — but the API
+  key's Cloud project has no billed quota for image generation
+  (`generate_content_free_tier_requests`, `limit: 0`), so calls currently
+  return a mapped `502`. This is a billing/project configuration issue, not a
+  code issue.
 - ✅ **Video → frame extraction is live**, in-browser.
 - ✅ **Backend, job state machine and Postgres are live** and survive redeploys.
 - ⚠️ **3D reconstruction runs in mock mode in the deployed app.** Jobs walk the
-  real state machine on real timings and return a **placeholder scene**.
-- ⚠️ **The real pipeline is built but not yet wired to the web app.** LichtFeld
-  Studio was compiled and verified on an RTX 5090, and COLMAP frame extraction
-  is scripted — but the deployed app does not yet run a live reconstruction.
+  real state machine on real timings and return a **placeholder scene** —
+  today, uploading a video in the live app does *not* produce the
+  reconstruction described below.
+- ⚠️ **A real reconstruction exists, but it was produced manually, offline —
+  not by the deployed app.** From a 42-second handheld phone video (best ~7s
+  used, sampled at 20 fps → 140 frames): COLMAP registered 140/140 images
+  (100%) into a single model, 17,312 points, 0.89 px mean reprojection error,
+  ~2,869 keypoints/image. LichtFeld Studio then trained 1,514,776 splats in
+  3m53s on a rented RTX 5090 (held-out eval: PSNR 25.29, SSIM 0.874), exported
+  to a 30.7 MB self-contained `scene.html` with working orbit/zoom (the GIFs
+  above are recordings of it). This proves the pipeline end to end; it is not
+  yet wired into the web app's job flow.
 
-The Gemini capability this hackathon requires is fully real. The 3D stage is the
-roadmap, and is labelled as such rather than implied.
+The Gemini theme-design capability this hackathon requires is fully real and
+live. Venue restyling and 3D reconstruction are real, working implementations
+gated on quota and integration work respectively — both labelled honestly
+above rather than implied.
 
 ## Local setup
 
@@ -250,12 +280,29 @@ Suggested 60-second path:
 2. **Pick a preset theme**, or press **"Or let Gemini design from my photos"** to
    trigger the live structured-output call — palette, decor, florals and a
    coverage verdict derived from your actual room.
-3. **"Visualize theme"** to have Gemini render your venue restyled.
+3. **"Visualize theme"** to have Gemini render your venue restyled — *currently
+   blocked on API quota and returns a 502; see "Honest status" above. Skip this
+   step in a live demo.*
 4. **Create memory** → watch the job walk the pipeline → open the viewer.
-5. **"✦ Reimagine in Studio"** to restyle the whole set in a new mood.
+5. **"✦ Reimagine in Studio"** to restyle the whole set in a new mood — *same
+   `/api/render` call as step 3, so it hits the same quota block; see "Honest
+   status."*
 
 ## Credits & license
 
 Built on the MIT-licensed [splat-service](https://github.com/jamesEmerson112/splat-service)
-boilerplate. LichtFeld Studio (GPLv3) is invoked as an external process only, so
-this repository remains MIT — see [LICENSE](LICENSE).
+boilerplate.
+
+3D reconstruction runs on [LichtFeld Studio](https://github.com/MrNeRF/LichtFeld-Studio)
+(GPL-3.0), invoked as an external process only — this repo does not link
+against or redistribute its code, so WeddingAI itself remains MIT (see
+[LICENSE](LICENSE)). Citation, per the upstream project's request:
+
+```bibtex
+@software{lichtfeld2025,
+  author    = {LichtFeld Studio},
+  title     = {LichtFeld Studio},
+  year      = {2025},
+  url       = {https://github.com/MrNeRF/LichtFeld-Studio}
+}
+```
