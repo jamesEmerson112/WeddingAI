@@ -27,6 +27,36 @@ the splat pipeline is still an open decision recorded at the bottom of that file
   ephemeral — the SQLite file needs a Railway volume attached (or accept a
   reset-on-redeploy DB for the demo).
 
+## START HERE — state as of 2026-07-20 ~06:00 UTC (handoff to main computer)
+
+**Everything technical for the submission is done. What remains needs a human.**
+
+Done and live: Gemini theme design (`/api/analyze`, structured output) and
+venue restyling (`/api/render`); in-browser video→frames; Next.js frontend on
+Vercel; Rust backend + **Postgres** on Railway (survives redeploys — verified by
+watching 3 seeded jobs live through a rebuild); LichtFeld Studio compiled and
+verified on an RTX 5090. README rewritten and all submission copy written in
+`docs/submission/`.
+
+**Blocking the submission, all user-side:**
+1. **Record the two videos** — scripts are written and timed in
+   `docs/submission/pitch-video-script.md` and `demo-video-script.md`.
+   Paste URLs into `docs/submission/demo-links.txt`.
+2. **Capture screenshots** per `docs/submission/screenshot-shotlist.md`.
+3. **Verify `/api/render` works** now that billing is on — NOT re-tested since.
+   It gates the best screenshot and a beat of the demo video.
+4. **Confirm the GitHub repo is public**, then run the incognito checklist at
+   the bottom of `demo-links.txt`.
+
+**⚠️ THE RUNPOD POD MAY STILL BE RUNNING AND BILLING ~$1/hr.** Check and
+terminate. The LichtFeld binary is safe at `/workspace/dist/` on the persistent
+volume; only the vcpkg cache dies with the pod.
+
+**Deliberately not built** (designed, not started): storage Phases 2-3 — the
+photo gallery. Use a **Railway Bucket**, not a volume (see "STORAGE FOR IMAGE
+BYTES"). Also unwired: the generated-images→LichtFeld 3D hop, and the permissive
+CORS still needs restricting to the Vercel domain.
+
 ## Fresh machine setup (read this FIRST on a new computer)
 
 Everything below is gitignored or untracked, so `git clone` alone does **not**
