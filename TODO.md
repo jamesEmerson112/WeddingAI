@@ -66,6 +66,15 @@ build + lint green, smoke-tested on a local prod server.
       needed). Only if that fails does the user shoot a 40–150 set. Expect a
       poor/failed reconstruction at 7 views; the value is proving the pipeline
       end to end so a bigger set is a pure data swap.
+- [x] **Capture strategy solved (user, ~02:00 UTC): shoot VIDEO, not photos.**
+      `scripts/video-to-frames.sh <video> [outdir] [fps]` extracts evenly
+      spaced frames with ffmpeg. Auto-picks fps to land ~110 frames, warns
+      outside 40–150, downscales >3840px once (LichtFeld `--max-width`), writes
+      `frame_%04d.jpg` at `-q:v 2`. Tested: auto-rate, explicit-rate,
+      downscale (5760→3840 keeping aspect), and all four guard paths.
+      Bonus over hand-shot photos: one camera = one set of intrinsics, which
+      COLMAP prefers.
+- [ ] Shoot a 45–90s slow orbit of one room and run the script on it.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 

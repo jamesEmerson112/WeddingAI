@@ -277,6 +277,20 @@ a background agent is now diagnosing and retrying it.
   (make) or `grep -oE "\[[0-9]+/[0-9]+\]"` (ninja) piped to `tail -1`.
   Success = `/workspace/dist/bin/run_lichtfeld.sh` exists (also the first-ever
   Blackwell/5090 JIT test; escape hatch = rent a 4090 in euro-3, same volume).
+- **CAPTURE = VIDEO, NOT PHOTOS (user call ~02:00 UTC).** Shooting 40–150
+  stills by hand is a hassle; instead shoot a 45–90s slow orbit and run
+  `scripts/video-to-frames.sh <video> [outdir] [fps]` (ffmpeg, tested). It
+  auto-picks fps to land ~110 frames, warns outside 40–150, downscales
+  >3840px once so LichtFeld doesn't rescale on every load, and writes
+  `frame_%04d.jpg` at `-q:v 2`. Fixed-rate on purpose: COLMAP wants evenly
+  spaced overlap, whereas scene detection thins out exactly the slow dense
+  passes that reconstruct best. Side benefit: one camera = one set of
+  intrinsics, which COLMAP prefers over a mixed photo set.
+  **Shooting tips that decide success**: move slowly (motion blur is the #1
+  failure mode for video-derived splats), keep good light, lock exposure and
+  focus if the phone allows, and **turn OFF electronic stabilisation** — EIS
+  warps and crops per frame, which breaks the single-camera-model assumption.
+  If COLMAP registers only a fraction of the frames, suspect blur first.
 - **PHOTO DATA + PLAN (user call 2026-07-20 ~01:40 UTC): test with the 6–7
   views FIRST; user will shoot 40–150 only if that fails.** `photos-inbox/`
   at repo root (gitignored) holds `Location-1/` (6 JPEGs, 5712×4284) and
