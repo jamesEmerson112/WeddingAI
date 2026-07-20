@@ -23,4 +23,10 @@ __pycache__/
 
 # macOS Finder metadata (can appear in any directory).
 .DS_Store
-photos-inbox/
+
+# Sample photo sets (photos-inbox/) ARE tracked — they're the preloaded sets the
+# gallery serves, and the repo is public for judging, so only web-sized copies
+# belong in git. Full-resolution originals stay local: a single 5712x4284 frame
+# is ~5 MB, and the reconstruction pipeline rescales anything over --max-width
+# (3840) on every load anyway.
+photos-inbox/originals/

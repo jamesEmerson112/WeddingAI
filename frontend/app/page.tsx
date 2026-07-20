@@ -13,6 +13,12 @@ import {
 import { PRESET_THEMES } from "@/lib/themes";
 import { saveMemoryMeta } from "@/lib/memory";
 import { extractFrames, isVideoFile } from "@/lib/frames";
+import {
+  fetchSampleFiles,
+  formatBytes,
+  loadSampleSets,
+  type SampleSet,
+} from "@/lib/samples";
 
 // How many training iterations to request for a new job. 7000 is a reasonable
 // default for a quick splat; the backend accepts this as the `iters` field.
@@ -63,12 +69,24 @@ export default function UploadPage() {
   // canvas that no longer has a page.
   useEffect(() => () => extractAbort.current?.abort(), []);
 
+  // Preloaded sample sets. Loaded when the gallery is first opened rather than
+  // on mount: fetching in an effect and setting state from it is a lint error
+  // here, and it keeps the manifest off the critical path for the common case
+  // where someone brings their own photos.
+  const [samplesOpen, setSamplesOpen] = useState(false);
+  const [sampleSets, setSampleSets] = useState<SampleSet[] | null>(null);
+  // Which set is currently being fetched, so only that card shows a spinner.
+  const [sampleBusy, setSampleBusy] = useState<string | null>(null);
+  const sampleAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => sampleAbort.current?.abort(), []);
+
   const totalMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
   const busy =
     stage === "zipping" ||
     stage === "uploading" ||
     stage === "creating" ||
-    extracting !== null;
+    extracting !== null ||
+    sampleBusy !== null;
   const goodOverlap = files.length >= 24;
 
   // Adopt a new photo set. The [thumbs] effect above revokes the previous
@@ -125,6 +143,46 @@ export default function UploadPage() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (requestSeq.current === myReq) setExtracting(null);
+    }
+  }
+
+  // Open the gallery, fetching the manifest the first time. Failure just means
+  // an empty list, which renders as "no sample sets" — never an error banner,
+  // since samples are a convenience and the dropzone above still works.
+  async function toggleSamples() {
+    const next = !samplesOpen;
+    setSamplesOpen(next);
+    if (!next || sampleSets !== null) return;
+    setSampleSets(await loadSampleSets());
+  }
+
+  // Adopt a sample set. Deliberately the same shape as addFiles: same busy
+  // guard, same generation bump, same stale-theme reset — from here on the set
+  // is indistinguishable from photos the user dropped in themselves.
+  async function adoptSample(set: SampleSet) {
+    if (busy) return;
+
+    const myReq = ++requestSeq.current;
+    setThemeError(null);
+    setThemeCached(false);
+    setError(null);
+    setSelection((sel) => (sel?.source === "gemini" ? null : sel));
+
+    sampleAbort.current?.abort();
+    const controller = new AbortController();
+    sampleAbort.current = controller;
+
+    applyImages([]);
+    setSampleBusy(set.id);
+    try {
+      const loaded = await fetchSampleFiles(set, { signal: controller.signal });
+      if (requestSeq.current !== myReq) return;
+      applyImages(loaded);
+    } catch (e) {
+      if (requestSeq.current !== myReq || (e as Error)?.name === "AbortError") return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (requestSeq.current === myReq) setSampleBusy(null);
     }
   }
 
@@ -276,6 +334,65 @@ export default function UploadPage() {
               onChange={(e) => addFiles(e.target.files)}
             />
           </label>
+
+          {/* Preloaded sets, so the product can be tried without shooting
+              anything — the one-click path for a first-time visitor. */}
+          <button
+            type="button"
+            onClick={toggleSamples}
+            className="mt-3 flex w-full items-center justify-center gap-1.5 text-xs font-medium text-taupe transition-colors hover:text-terra"
+          >
+            <span className={`transition-transform ${samplesOpen ? "rotate-90" : ""}`}>
+              ›
+            </span>
+            {samplesOpen ? "Hide sample sets" : "Or try a sample set"}
+          </button>
+
+          {samplesOpen && (
+            <div className="mt-3 space-y-2">
+              {sampleSets === null && (
+                <div className="rounded-xl border border-ink/10 bg-card px-4 py-3 text-[13px] text-fawn">
+                  Loading sample sets…
+                </div>
+              )}
+              {sampleSets?.length === 0 && (
+                <div className="rounded-xl border border-ink/10 bg-card px-4 py-3 text-[13px] text-fawn">
+                  No sample sets are published in this build.
+                </div>
+              )}
+              {sampleSets?.map((set) => (
+                <div
+                  key={set.id}
+                  className="rounded-xl border border-ink/10 bg-card p-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex flex-1 gap-1">
+                      {set.photos.slice(0, 5).map((src) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          key={src}
+                          src={src}
+                          alt=""
+                          className="size-11 rounded-md object-cover"
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => adoptSample(set)}
+                      className="shrink-0 rounded-full bg-terra px-3.5 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                    >
+                      {sampleBusy === set.id ? "Loading…" : "Use these"}
+                    </button>
+                  </div>
+                  <div className="mt-2 text-[11px] text-fawn">
+                    {set.label} · {set.count} photos · {formatBytes(set.bytes)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Video → frames. Decoding is the slow part, so show real counts. */}
           {extracting && (

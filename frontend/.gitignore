@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Generated from photos-inbox/ by scripts/build-samples.mjs on predev/prebuild.
+/public/samples/
