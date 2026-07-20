@@ -135,20 +135,27 @@ VRAM, no multi-GPU.
 
 ## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~04:40 UTC)
 
-- 🚨 **DO NOT PUSH UNTIL RAILWAY POSTGRES EXISTS.** Local commit `dcb8392`
-  migrates the backend SQLite → Postgres. `main.rs` panics on
-  `expect("failed to connect to the database")` if `DATABASE_URL` doesn't
-  resolve, so pushing before the Postgres service is provisioned **takes the
-  live backend down**. Required user action, in order:
-  1. Add a Postgres service to the Railway project (`+ New` → Postgres).
-  2. On the **backend** service set `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
-     (Railway reference syntax; resolves to the private
-     `postgres.railway.internal` URL. `DATABASE_PUBLIC_URL` is the TCP-proxy
-     external one and bills egress — don't use it service-to-service).
-  3. Then push, then reseed.
-  Railway's public/private variable NAMES have changed across versions — verify
-  in the dashboard rather than trusting the docs.
-- **Postgres migration DONE + VERIFIED locally** (`dcb8392`, unpushed). Verified
+- ✅ **POSTGRES IS LIVE ON RAILWAY (2026-07-20 ~05:00 UTC).** Confirmed by the
+  `_sqlx_migrations` and `jobs` tables existing in the Postgres service's Data
+  tab — the migration ran for real. **The DB no longer resets on deploy**, which
+  kills the old "reseed after EVERY push" rule.
+- **⚠️ The deploy that got us here crash-looped first — learn from it.** The
+  first push died with sqlx's bare `Configuration(RelativeUrlWithoutBase)`,
+  ~5 min of 502s. Cause: `DATABASE_URL` existed on the backend service but its
+  VALUE wasn't a URL — a Railway reference `${{Foo.DATABASE_URL}}` stays a
+  literal string when no service is named exactly `Foo`, so the dashboard shows
+  a correctly-set variable that is useless. The reliable fix is Railway's own
+  **"Trying to connect a database? Add Variable"** prompt, which wires the
+  reference with no name to typo. `main.rs` now validates the scheme up front
+  and names the cause (`b9daa47`) instead of panicking cryptically — it never
+  logs the value, which carries the password.
+  **Process lesson**: a masked variable value cannot be verified from outside.
+  Read it in Railway's Raw Editor BEFORE pushing a change that depends on it.
+  Also: right after a push, `/api/health` returning 200 may still be the OLD
+  deploy — don't read it as success until the rebuild has actually swapped.
+- **Railway layout**: services `WeddingAI` (backend, volume `weddingai-volume`
+  mounted at `/data`) and `Postgres` (volume `postgres-volume`).
+- **Postgres migration DONE + VERIFIED** (`dcb8392`). Verified
   against a real Postgres 16 in Docker, not merely compiled: fmt/clippy/4 tests
   pass, migrations apply, and a full `uploaded → done` job walk exercised every
   rewritten statement. Two silent-at-compile-time landmines caught and fixed:
@@ -220,14 +227,13 @@ VRAM, no multi-GPU.
   → Opus adversarial verifiers; 8 raw findings, 1 confirmed) caught a real
   race — in-flight Gemini responses landing on a swapped photo set — fixed via
   a `requestSeq` ref guard in `page.tsx`.
-- **DEMO SEEDS: 3 `done` jobs live, reseeded + verified ~01:50 UTC** after
-  the `befad7f` push. Reseed with `bash <scratchpad>/seed-demo-jobs.sh`
+- **DEMO SEEDS: 3 `done` jobs live, reseeded ~04:58 UTC onto Postgres.**
+  Reseed script if ever needed: `bash <scratchpad>/seed-demo-jobs.sh`
   (session 6de23d68, ~30s, then the mock poller walks them to `done` in ~25s).
-  **CONFIRMED: even a docs-only push rebuilds Railway and wipes SQLite** —
-  `befad7f` touched only `.md` files and still cleared the DB. So: verify +
-  reseed after EVERY push, no exceptions.
-  Verify with the tally form, NOT `grep -c` — the API returns ONE line of
-  JSON, so `grep -c` can only ever print 0 or 1:
+  **The old "reseed after EVERY push" rule is now OBSOLETE** — that was a
+  SQLite-on-ephemeral-disk problem, and Postgres persists across deploys.
+  Still verify after a push, with the tally form and NOT `grep -c` (the API
+  returns ONE line of JSON, so `grep -c` can only ever print 0 or 1):
   `curl -s $API/api/jobs | grep -o '"state":"[a-z]*"' | sort | uniq -c`
 - **THERE IS NO PUSH FREEZE** (lifted by the user ~21:05 UTC, still lifted).
   Pushes are fine anytime: both platforms deploy zero-downtime, so the demo
