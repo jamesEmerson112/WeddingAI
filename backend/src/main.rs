@@ -57,6 +57,33 @@ async fn main() {
     // bills network egress — prefer the private one for service-to-service.
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/weddingai".to_string());
+
+    // Fail with an explanation rather than sqlx's bare
+    // `Configuration(RelativeUrlWithoutBase)`, which is what you get when
+    // DATABASE_URL is set but isn't a URL at all. The overwhelmingly common
+    // cause on Railway is an unresolved reference variable: `${{Foo.DATABASE_URL}}`
+    // stays a literal string when no service is named exactly `Foo`, so the
+    // variable looks correctly set in the dashboard while being useless.
+    //
+    // NEVER log db_url itself — it carries the database password.
+    if !(db_url.starts_with("postgres://") || db_url.starts_with("postgresql://")) {
+        let hint = if db_url.contains("${{") {
+            "it still contains a literal `${{...}}` reference — the referenced \
+             Railway service name doesn't match any service in this project"
+        } else if db_url.starts_with("sqlite:") {
+            "it's still the old SQLite URL — this backend moved to Postgres"
+        } else {
+            "it has no `postgres://` scheme"
+        };
+        panic!(
+            "DATABASE_URL is not a Postgres connection string: {hint}. \
+             Expected postgres://user:pass@host:port/dbname. \
+             On Railway set it to the reference ${{{{Postgres.DATABASE_URL}}}} \
+             (exact service name), or use the dashboard's \
+             \"Trying to connect a database? Add Variable\" prompt."
+        );
+    }
+
     let db = PgPoolOptions::new()
         .connect(&db_url)
         .await
