@@ -31,9 +31,15 @@ exactly the failures judges will hit:
 [ ] The Memories gallery shows finished scenes (reseed if empty:
     scripts/seed-demo-jobs.sh)
 [ ] "Or let Gemini design from my photos" returns a real theme report
-[ ] "Visualize theme" returns a real render
-    NOTE: this was blocked by a free-tier quota until billing was enabled on
-    2026-07-20. Confirm it works before submitting - it had not been re-tested.
+[ ] "Visualize theme" - KNOWN BROKEN (tested 2026-07-20, both localhost and
+    live Vercel site): returns HTTP 502. Upstream cause confirmed from the
+    dev-server log: 429 RESOURCE_EXHAUSTED, generate_content_free_tier
+    limit: 0 for gemini-2.5-flash-preview-image. The key's Cloud project has
+    no billed image-generation quota - route code and model ID are correct,
+    this is a billing/project issue only. README "Honest status" already
+    reflects this as blocked (not live). Either fix the key's billing before
+    submitting, or leave as-is and do not demo this specific button live -
+    rely on the theme-design report (which works) instead.
 [ ] A new job walks the pipeline and the viewer opens
 [ ] GitHub repo opens while logged out
 [ ] Both video links play while logged out

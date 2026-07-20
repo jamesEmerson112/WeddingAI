@@ -48,9 +48,16 @@ verified on an RTX 5090. README rewritten and all submission copy written in
 4. **Confirm the GitHub repo is public**, then run the incognito checklist at
    the bottom of `demo-links.txt`.
 
-**⚠️ THE RUNPOD POD MAY STILL BE RUNNING AND BILLING ~$1/hr.** Check and
-terminate. The LichtFeld binary is safe at `/workspace/dist/` on the persistent
-volume; only the vcpkg cache dies with the pod.
+**✅ POD STOPPED by the user 2026-07-20 ~01:10 UTC** — verified from this machine
+(SSH `Connection refused`). GPU billing (~$1/hr) has stopped. Note **stopped is
+not terminated**: RunPod still charges storage for the container disk, and the
+`/workspace` network volume bills separately either way. Terminate to zero it
+out — the volume and the LichtFeld binary at `/workspace/dist/` survive
+termination; only the 1.3 GB vcpkg cache on the container disk is lost, which
+matters solely if LichtFeld is ever rebuilt.
+
+Nothing is stranded on the pod — the reconstruction artifacts are all local
+(see the reconstruction entry below).
 
 **Deliberately not built** (designed, not started): storage Phases 2-3 — the
 photo gallery. Use a **Railway Bucket**, not a volume (see "STORAGE FOR IMAGE
@@ -259,13 +266,35 @@ VRAM, no multi-GPU.
   with a real image → real `gemini-3.5-flash` structured report. Key also in
   `frontend/.env` (verified gitignored via `frontend/.gitignore:34`) for local
   dev. Still to run: full incognito upload → viewer test.
-- **GEMINI BILLING ENABLED by the user 2026-07-20 ~04:30 UTC.** `/api/render`
-  (image generation, `gemini-2.5-flash-image`) previously 429'd with
-  `generate_content_free_tier` because the key's project was free tier — image
-  generation has no free allowance, though text models worked. The code and
-  model ID were always correct; it was purely a billing tier issue.
-  ⚠️ **NOT re-tested since billing was enabled** — confirm with one live
-  "Visualize theme" click before relying on it in a demo.
+- **⛔ IMAGE GENERATION IS STILL BLOCKED — billing did NOT take effect
+  (re-tested 2026-07-20 ~06:55 UTC).** The earlier note claimed billing was
+  enabled ~04:30 UTC and only needed confirming. It was confirmed, and it
+  FAILED. `/api/render` returns 502 on **both** localhost and the deployed
+  Vercel site. The upstream error is unchanged from the pre-billing state:
+  ```
+  429 RESOURCE_EXHAUSTED — Quota exceeded for metric:
+  generativelanguage.googleapis.com/generate_content_free_tier_requests,
+  limit: 0, model: gemini-2.5-flash-preview-image
+  ```
+  **`limit: 0` on a `_free_tier_` metric is the signature of a project with no
+  active billing.** A paid project would not report free-tier quota at all.
+  Isolation already done, so don't redo it:
+  - `/api/analyze` (text, `gemini-3.5-flash`) returns **200 with a real theme**
+    on the same key → the key is valid and the request shape is correct.
+  - The key can *list* nine image models (`gemini-2.5-flash-image`,
+    `gemini-3.1-flash-image`, `gemini-3-pro-image`, `imagen-4.0-*`, …) — listing
+    a model does not imply quota to call it.
+  - Note Google resolves the requested `gemini-2.5-flash-image` to
+    `gemini-2.5-flash-preview-image` in the quota error. The code and model ID
+    are NOT the problem; this is purely a billing/project issue.
+  **Most likely cause to check first: the API key belongs to a different Google
+  Cloud project than the one billing was enabled on.** That is the common trap —
+  enabling billing in the Cloud console does nothing for a key minted under
+  another project. Verify in AI Studio which project the key belongs to, then
+  confirm billing is active on *that* project.
+  Consequence while this is unfixed: the "Visualize theme" render, screenshot
+  `02-restyled-render.png`, and the central beat of both video scripts are all
+  unavailable. The UI is built and surfaces the failure cleanly.
 - **Vision render feature shipped** (`6850bf1`, ~20:39 UTC): `/api/render`
   route (image-to-image: one venue photo + theme → concept render), "Visualize
   theme" button on the report card. An ultracode verify fleet (4 Sonnet finders
@@ -353,11 +382,39 @@ VRAM, no multi-GPU.
 **`/workspace/dist/bin/run_lichtfeld.sh`** — on the PERSISTENT network volume, so
 it survives pod termination. Verified runnable (exit 0, full help text, all
 subcommands). No Blackwell/RTX 5090 JIT errors; `CMAKE_CUDA_ARCHITECTURES` was
-auto-detected as `120-real;120-virtual`. Caveat: this only exercised startup and
-CLI parsing — a real CUDA kernel JIT only triggers on an actual training run.
+auto-detected as `120-real;120-virtual`. The old caveat that this had "only
+exercised startup and CLI parsing" is now **RESOLVED** — a full training run has
+since completed on the 5090, so Blackwell/sm_120 kernels JIT cleanly for real.
 
-⚠️ **THE POD IS STILL RUNNING AND BILLING ~$1/hr.** Terminate when done; the
-volume (and therefore the binary) survives, but `/root/.cache/vcpkg` does not.
+✅ **FIRST REAL RECONSTRUCTION SUCCEEDED (2026-07-20 ~00:18 UTC).** The whole
+Phase 0 pipeline ran end to end and produced a scene the user judged good
+("the scene is beautiful"), unlike the earlier attempt which was reverted.
+
+- Source: `IMG_3041.mov`, 42s handheld phone video, 1280x720 h264.
+- **Only the best ~7 seconds were used**, sampled densely at **20 fps → 140
+  frames**. This is the whole lesson: a short sharp segment beats a long mixed
+  one. The rest of the clip was a corridor walked *through* (near-zero parallax)
+  with blank walls and heavy motion blur — unusable.
+- COLMAP: **140/140 registered (100%)**, one model, 17,312 points, mean
+  reprojection error **0.89 px**, ~**2,869 keypoints/image** (vs ~725 on the
+  failed night footage — the ~4x difference is why this one worked).
+- LichtFeld training: `--undistort -i 30000`, **3m53s**, **1,514,776 splats**.
+- Held-out eval (`--eval --test-every 8`): **PSNR 25.29 / SSIM 0.874**.
+- Export: `scene.html`, **30.7 MB**, working orbit controls. `convert` exited
+  134 as always — the file was tested for, not the exit code.
+
+**Artifacts are local and safe** — `frontend/public/demo/scene-3041.html`
+(gitignored via `frontend/.gitignore`'s `/public/demo/scene-*.html`) plus a copy
+in the session scratchpad. On the pod they remain at `/workspace/proj3041` and
+`/workspace/out3041`.
+
+**Known limit — coverage, not quality:** 7 seconds is one short arc, so the
+reconstructed volume is the island/counter/desk only. Fly the camera wide of the
+capture path and it stretches. A fuller room needs a second 20-30s orbit at a
+wider radius, then `exhaustive_matcher` across both takes for loop closure.
+
+⚠️ **30.7 MB is too big to commit.** Serving it from the deployed app needs
+object storage (the repo already stubs `R2_*`; a Railway Bucket maps 1:1).
 
 **Two root causes, both found by experiment — record them so nobody re-guesses:**
 1. The mass `.o.d: No such file or directory` failure was **NOT** a MooseFS/network

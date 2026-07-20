@@ -31,4 +31,10 @@ __pycache__/
 # (3840) on every load anyway.
 photos-inbox/originals/
 
-IMG_3040.mov
+# Camera captures dropped at the repo root for a test run. These are tens of MB
+# and there is no reason for one to enter history — a 16 MB scene.html already
+# got swept in by a `git add -A` (d6e5e04) and is stuck there permanently.
+/*.mov
+/*.MOV
+/*.mp4
+/*.MP4
