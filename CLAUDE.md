@@ -27,6 +27,28 @@ the splat pipeline is still an open decision recorded at the bottom of that file
   ephemeral — the SQLite file needs a Railway volume attached (or accept a
   reset-on-redeploy DB for the demo).
 
+## Fresh machine setup (read this FIRST on a new computer)
+
+Everything below is gitignored or untracked, so `git clone` alone does **not**
+give you a working checkout. Recreate these by hand. **Never paste real values
+into a tracked file** — only the variable NAMES belong in git.
+
+| File (gitignored) | Variables | Where to get the values |
+|---|---|---|
+| `frontend/.env` | `GEMINI_API_KEY`, `NEXT_PUBLIC_API_URL` | Key: Vercel → WeddingAI → Settings → Environment Variables (Production). URL: the Railway backend domain. |
+| `backend/.env` | `MOCK_MODE`, `PORT`, `PUBLIC_BASE_URL`, `DATABASE_URL`, `TEST_DATABASE_URL`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `R2_*` | `cp backend/.env.example backend/.env` — the local Postgres defaults already work; RunPod/R2 only matter in real mode. |
+| `.env.pod` (repo root) | `POD_SSH_USER`, `POD_SSH_HOST`, `POD_SSH_PORT`, `POD_SSH_KEY` | RunPod dashboard → the pod's SSH details. Only needed to touch the GPU pod. |
+| `photos-inbox/` | — | Local test photos; not in git. Re-add if needed, or shoot a video and use `scripts/video-to-frames.sh`. |
+
+Then:
+
+```bash
+cd backend && docker compose up -d && cargo run    # Postgres must be up first
+cd frontend && npm install && npm run dev
+```
+
+Sanity check: `curl -s localhost:8080/api/health` should report `"db":"ok"`.
+
 ## Commands
 
 Backend (Rust/Axum, port 8080):
@@ -207,20 +229,13 @@ VRAM, no multi-GPU.
   with a real image → real `gemini-3.5-flash` structured report. Key also in
   `frontend/.env` (verified gitignored via `frontend/.gitignore:34`) for local
   dev. Still to run: full incognito upload → viewer test.
-- **GEMINI BILLING ENABLED by the user (~04:30 UTC) — `/api/render` should now
-  work; NOT yet re-tested.** The block below described the free-tier 429; it is
-  believed resolved. Verify with a live "Visualize theme" call before relying on
-  it in the demo, then delete the stale block below.
-- **`/api/render` (STALE — see the billing note above) was BLOCKED BY KEY TIER**: live calls 429 with
-  `generate_content_free_tier` quota exceeded — the Gemini key's project is
-  FREE TIER, which has no real image-generation allowance (text models work).
-  Verified via direct REST: `gemini-2.5-flash-image` IS on the key's model
-  list, metadata resolves, generateContent → 429. **Code and model ID are
-  correct — NO code change needed.** USER ACTION: enable billing / upgrade the
-  key's project to Tier 1 (ai.google.dev) or swap `GEMINI_API_KEY` to a billed
-  project's key in Vercel + `frontend/.env`. Until then the "Visualize theme"
-  button 502s gracefully (demo can skip it). **This also blocks the afternoon
-  generated-images→LichtFeld run** — image generation is the product's input.
+- **GEMINI BILLING ENABLED by the user 2026-07-20 ~04:30 UTC.** `/api/render`
+  (image generation, `gemini-2.5-flash-image`) previously 429'd with
+  `generate_content_free_tier` because the key's project was free tier — image
+  generation has no free allowance, though text models worked. The code and
+  model ID were always correct; it was purely a billing tier issue.
+  ⚠️ **NOT re-tested since billing was enabled** — confirm with one live
+  "Visualize theme" click before relying on it in a demo.
 - **Vision render feature shipped** (`6850bf1`, ~20:39 UTC): `/api/render`
   route (image-to-image: one venue photo + theme → concept render), "Visualize
   theme" button on the report card. An ultracode verify fleet (4 Sonnet finders
@@ -228,8 +243,8 @@ VRAM, no multi-GPU.
   race — in-flight Gemini responses landing on a swapped photo set — fixed via
   a `requestSeq` ref guard in `page.tsx`.
 - **DEMO SEEDS: 3 `done` jobs live, reseeded ~04:58 UTC onto Postgres.**
-  Reseed script if ever needed: `bash <scratchpad>/seed-demo-jobs.sh`
-  (session 6de23d68, ~30s, then the mock poller walks them to `done` in ~25s).
+  Reseed if ever needed: `scripts/seed-demo-jobs.sh [API_URL] [COUNT]`
+  (in-repo, ~30s, then the mock poller walks them to `done` in ~25s).
   **The old "reseed after EVERY push" rule is now OBSOLETE** — that was a
   SQLite-on-ephemeral-disk problem, and Postgres persists across deploys.
   Still verify after a push, with the tally form and NOT `grep -c` (the API
@@ -244,10 +259,9 @@ VRAM, no multi-GPU.
   reseed, never withhold the push.
 - **UI MOCKUP REWORK SHIPPED + LIVE** (`d3ad453` build, `bfa806d` review
   fixes; Vercel deploy verified live ~01:15 UTC: `/studio` → 200, homepage
-  says "Create a memory"). Source design: `WeddingAI-Prototype.html` at repo
-  root (untracked bundled artifact; extracted markup at scratchpad
-  `prototype-extracted.html`). Plan:
-  `/Users/mrbam/.claude/plans/unified-crunching-gadget.md`.
+  says "Create a memory"). Source design: **`WeddingAI-Prototype.html`** at repo
+  root — now COMMITTED (551 KB bundled artifact) so it survives a machine move;
+  it is the design of record for all five screens.
   Five screens, all building + linting clean:
   `app/page.tsx` Upload ("Create a memory": dropzone + real thumbnails, 6
   preset theme chips from `lib/themes.ts`, secondary "let Gemini design from
