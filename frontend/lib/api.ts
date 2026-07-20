@@ -103,22 +103,33 @@ export async function listJobs(): Promise<Job[]> {
 // isPlaceholderScene() as the single source of truth.
 const PLACEHOLDER_SCENE_URL = "/demo/scene.html";
 
-// A real LichtFeld Studio export, committed to the repo (30.7 MB —
-// public/demo/scene-3041.html, see frontend/.gitignore's explicit exception
-// carved out for this one file) so the deployed Vercel site has a genuine
-// reconstruction to show with no dashboard step required on a fresh clone.
+// A real LichtFeld Studio export is committed at public/demo/scene-3041.html
+// (30.7 MB — see frontend/.gitignore's explicit exception for that one file).
+// Point NEXT_PUBLIC_DEMO_SCENE_URL at it to show it instead of the placeholder.
 // IMPORTANT: it is ONE FIXED scene (the author's apartment) reused for every
 // mock job — never treat it as if it came from any particular upload. See
 // sceneKind() below, which exists specifically so callers can't forget this.
-const EXAMPLE_SCENE_URL = "/demo/scene-3041.html";
 
-// What sceneUrl() substitutes in for PLACEHOLDER_SCENE_URL. Defaults to the
-// committed EXAMPLE_SCENE_URL, so the substitution works out of the box with
-// zero environment configuration. NEXT_PUBLIC_DEMO_SCENE_URL still overrides
-// it when set — e.g. to point at a scene hosted in a bucket later, or,
-// deliberately, back to PLACEHOLDER_SCENE_URL itself to disable the swap and
-// show the honest stand-in again.
-const DEMO_SCENE_URL = process.env.NEXT_PUBLIC_DEMO_SCENE_URL || EXAMPLE_SCENE_URL;
+// What sceneUrl() substitutes in for PLACEHOLDER_SCENE_URL.
+//
+// ⚠️ Defaults to the PLACEHOLDER, not to EXAMPLE_SCENE_URL — deliberately, and
+// learned the hard way. Defaulting to the example scene was tried and shipped
+// on 2026-07-20 and BROKE PRODUCTION: the code deployed fine but Vercel did not
+// publish the 30.7 MB static asset, so every viewer pointed its iframe at a URL
+// that 404'd. Committing a file to git does NOT guarantee the host serves it,
+// and a default that assumes it does fails closed into something worse than the
+// placeholder it replaced.
+//
+// So the example scene is now strictly opt-in via NEXT_PUBLIC_DEMO_SCENE_URL,
+// set only where the file is known to be reachable:
+//   - local dev: frontend/.env sets it to /demo/scene-3041.html (works — the
+//     file is on disk and next dev serves it)
+//   - production: leave UNSET until the scene is hosted somewhere Vercel will
+//     actually serve (a Blob/bucket URL), then set it to that URL.
+// Unset => the honest "Stand-in scene" placeholder, which always exists in git
+// and is small enough that every host serves it.
+const DEMO_SCENE_URL =
+  process.env.NEXT_PUBLIC_DEMO_SCENE_URL || PLACEHOLDER_SCENE_URL;
 
 // Pull the viewable scene URL out of a finished job.
 // artifacts_json is a JSON string the backend stamps on completion, e.g.
