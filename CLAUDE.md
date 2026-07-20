@@ -151,14 +151,22 @@ VRAM, no multi-GPU.
   → Opus adversarial verifiers; 8 raw findings, 1 confirmed) caught a real
   race — in-flight Gemini responses landing on a swapped photo set — fixed via
   a `requestSeq` ref guard in `page.tsx`.
-- **DEMO SEEDS: WIPED — 0 `done` jobs on the live backend (needs reseed).**
-  The `bfa806d` push rebuilt Railway and cleared SQLite. Reseed with
-  `bash <scratchpad>/seed-demo-jobs.sh` (session 6de23d68, ~30s, creates 3
-  jobs the mock poller walks to `done` in ~25s). User interrupted the reseed
-  at ~01:10 UTC — RUN IT before any demo. Rule: verify + reseed after EVERY
-  push (even docs-only pushes have triggered a Railway rebuild).
-- **Push freeze LIFTED (user call, ~21:05 UTC)** — pushes are fine anytime:
-  both platforms deploy zero-downtime, so the demo link never goes dark.
+- **DEMO SEEDS: 3 `done` jobs live, reseeded + verified ~01:50 UTC** after
+  the `befad7f` push. Reseed with `bash <scratchpad>/seed-demo-jobs.sh`
+  (session 6de23d68, ~30s, then the mock poller walks them to `done` in ~25s).
+  **CONFIRMED: even a docs-only push rebuilds Railway and wipes SQLite** —
+  `befad7f` touched only `.md` files and still cleared the DB. So: verify +
+  reseed after EVERY push, no exceptions.
+  Verify with the tally form, NOT `grep -c` — the API returns ONE line of
+  JSON, so `grep -c` can only ever print 0 or 1:
+  `curl -s $API/api/jobs | grep -o '"state":"[a-z]*"' | sort | uniq -c`
+- **THERE IS NO PUSH FREEZE** (lifted by the user ~21:05 UTC, still lifted).
+  Pushes are fine anytime: both platforms deploy zero-downtime, so the demo
+  link never goes dark. Do NOT invent a "hold the push so Railway stays
+  untouched" rule — that was an assistant error on 2026-07-20 ~01:30 UTC and
+  the user correctly called it out. The real consequence of a push is only
+  that a Railway rebuild wipes ephemeral SQLite; the response is verify +
+  reseed, never withhold the push.
 - **UI MOCKUP REWORK SHIPPED + LIVE** (`d3ad453` build, `bfa806d` review
   fixes; Vercel deploy verified live ~01:15 UTC: `/studio` → 200, homepage
   says "Create a memory"). Source design: `WeddingAI-Prototype.html` at repo
@@ -220,9 +228,10 @@ VRAM, no multi-GPU.
   `frontend/app/page.tsx`. Locally needs `frontend/.env.local` — USER runs:
   `grep '^GEMINI_API_KEY=' backend/.env > frontend/.env.local`.
 
-## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~01:15 UTC)
+## Phase 0 state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~01:45 UTC)
 
-RunPod pod is ALIVE and doing a **clean LichtFeld rebuild** (started 00:59 UTC).
+RunPod pod is ALIVE. The clean rebuild **FAILED** (see build attempt #3 below);
+a background agent is now diagnosing and retrying it.
 
 - **Pod**: RTX 5090 (32 GB, 32 vCPU, Ubuntu 24.04, CUDA 12.8.93 at
   `/usr/local/cuda`, NOT on default SSH PATH), euro-3. 120 GB network volume
@@ -246,22 +255,38 @@ RunPod pod is ALIVE and doing a **clean LichtFeld rebuild** (started 00:59 UTC).
   ports) — OUTSIDE the build tree**, so wiping `build/` does NOT repeat the
   2-hour dependency phase; ports restore from cache. (It is on the CONTAINER
   disk, so it dies with the pod — the volume keeps sources only.)
-- **Current run**: tmux session `build`, log `/workspace/build3.log` (the
-  script does NOT self-redirect — always launch as
-  `tmux new-session -d -s build "bash /workspace/phase0_build.sh > /workspace/buildN.log 2>&1"`,
-  or the output is lost when the session ends). Check with
-  `grep -E "^=== " /workspace/build3.log | tail` and
-  `grep -oE "\[[0-9]+/[0-9]+\]" /workspace/build3.log | tail -1` (ninja).
+- **BUILD ATTEMPT #3 FAILED — wiping `build/` was NOT the fix.** Log
+  `/workspace/build3.log`. Configure SUCCEEDED this time (00:59:05 → 01:05:39
+  UTC, so the gtk fix held), then the build died in **12 seconds** with the
+  SAME error on EVERY target at once (lfs_tree_sitter, OpenMeshCore, nfd,
+  nvimgcodec, spz_lib, lfs_geometry, gsplat_backend_lfs, Zep):
+  `fatal error: opening dependency file CMakeFiles/<t>.dir/<f>.o.d: No such
+  file or directory`. **Ruled out: disk space AND inodes** — `/` is 8% used
+  (28 G free), `/workspace` has 216 T free. Note the log shows `gmake`
+  (Makefiles generator), not ninja as earlier notes assumed.
+  Leading hypothesis: the build tree is on `/workspace`, a **MooseFS network
+  mount**, and GCC's `.o.d` dependency-file writes into freshly-created
+  object dirs are unreliable there → **build on the container disk**
+  (`/root/...`) instead. The vcpkg binary cache already lives on that disk,
+  so relocating the build tree does NOT repeat the dependency phase.
+  A background agent (spawned ~01:40 UTC) is testing this and will retry.
+- **Launch pattern**: the script does NOT self-redirect — always launch as
+  `tmux new-session -d -s buildN "bash /workspace/phase0_build.sh > /workspace/buildN.log 2>&1"`,
+  or the output is lost when the session ends. Check with
+  `grep -E "^=== " /workspace/buildN.log | tail`, `grep -oE "\[ *[0-9]+%\]"`
+  (make) or `grep -oE "\[[0-9]+/[0-9]+\]"` (ninja) piped to `tail -1`.
   Success = `/workspace/dist/bin/run_lichtfeld.sh` exists (also the first-ever
   Blackwell/5090 JIT test; escape hatch = rent a 4090 in euro-3, same volume).
-- **PHOTO DATA (user pasted 2026-07-20 ~00:40 UTC)**: `photos-inbox/` at repo
-  root (gitignored) holds `Location-1/` (6 JPEGs, 5712×4284) and `Location-2/`
-  (7 JPEGs, 1024×768). **This is far too few for a real splat** — COLMAP +
-  LichtFeld want 40–150 photos of ONE place with good overlap; 6–7 views will
-  not reconstruct. Uses that DO work with this set: the demo "sample venue"
-  button, theme-analysis and render demos, screenshots. **A real 3D run needs
-  the user to shoot/supply a proper walkthrough set of one room.** Also
-  pre-resize before training (max 4096px, `--max-width` default 3840).
+- **PHOTO DATA + PLAN (user call 2026-07-20 ~01:40 UTC): test with the 6–7
+  views FIRST; user will shoot 40–150 only if that fails.** `photos-inbox/`
+  at repo root (gitignored) holds `Location-1/` (6 JPEGs, 5712×4284) and
+  `Location-2/` (7 JPEGs, 1024×768). Use **Location-2 first** (7 views, and
+  1024×768 needs no pre-resize). Expectation to set honestly: 6–7 views will
+  very likely NOT yield a clean walkable scene — COLMAP may fail to register
+  them all into one model — but the run still earns its keep by exercising
+  COLMAP → train → `convert` → viewer end to end, so a bigger set later is a
+  data swap rather than a debugging session. Pre-resize Location-1 before
+  training (max 4096px, `--max-width` default 3840).
 - **Iron rule**: end of session = TERMINATE THE POD, KEEP THE VOLUME. Idle
   pods bill ~$1/hr. Note the vcpkg binary cache does NOT survive termination.
 

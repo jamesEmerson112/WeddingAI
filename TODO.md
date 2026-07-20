@@ -54,14 +54,18 @@ build + lint green, smoke-tested on a local prod server.
       11 confirmed, all fixed in `bfa806d`). Vercel deploy verified live.
 - [ ] **RESEED the demo jobs** — the push wiped Railway's DB, live count is 0.
 
-## 1.6 Real 3D run (BLOCKED on photo data)
+## 1.6 Real 3D run (blocked on the pod build, NOT on photos)
 
-- [ ] Pod is doing a clean LichtFeld rebuild (see CLAUDE.md Phase 0). Once
-      `dist/bin/run_lichtfeld.sh` exists: COLMAP → train → `convert` to
+- [ ] LichtFeld build attempt #3 FAILED (see CLAUDE.md Phase 0 — mass `.o.d`
+      error, MooseFS hypothesis). Background agent diagnosing + retrying.
+      Once `dist/bin/run_lichtfeld.sh` exists: COLMAP → train → `convert` to
       scene.html → scp down → `frontend/public/` + point a job's
       artifacts_json at it.
-- [ ] **Need a proper photo set**: `photos-inbox/` has only 6 + 7 photos of
-      two locations; a splat needs 40–150 views of ONE place with overlap.
+- [x] Photo decision (user, ~01:40 UTC): **try the 6–7 views we already have
+      first** (`photos-inbox/Location-2/`, 7 JPEGs @1024×768 — no pre-resize
+      needed). Only if that fails does the user shoot a 40–150 set. Expect a
+      poor/failed reconstruction at 7 views; the value is proving the pipeline
+      end to end so a bigger set is a pure data swap.
 
 ## 2. First deploy dry-run (do IMMEDIATELY after the Gemini feature works locally)
 
