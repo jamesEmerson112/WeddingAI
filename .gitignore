@@ -30,3 +30,5 @@ __pycache__/
 # is ~5 MB, and the reconstruction pipeline rescales anything over --max-width
 # (3840) on every load anyway.
 photos-inbox/originals/
+
+IMG_3040.mov
