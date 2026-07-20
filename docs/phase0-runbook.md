@@ -84,15 +84,40 @@ scp -P <port> -r ./my_photos root@<pod-ip>:/workspace/project/images
 
 ```bash
 cd /workspace/project
-time colmap feature_extractor --database_path db.db --image_path images --SiftExtraction.use_gpu 1
-time colmap exhaustive_matcher --database_path db.db --SiftMatching.use_gpu 1
+time colmap feature_extractor --database_path db.db --image_path images \
+  --ImageReader.single_camera 1 --SiftExtraction.use_gpu 1
+time colmap exhaustive_matcher --database_path db.db --SiftMatching.use_gpu 0
 # for an ordered walkthrough instead:  colmap sequential_matcher --database_path db.db
 mkdir -p sparse
 time colmap mapper --database_path db.db --image_path images --output_path sparse
 ls sparse/0   # MUST show: cameras.bin  images.bin  points3D.bin
 ```
 
-If `sparse/0` is missing or has almost no images registered → photo set problem (overlap/blur). Reshoot; note what failed.
+Two flags that are not optional here, both learned the hard way (2026-07-20):
+
+- **`--ImageReader.single_camera 1`** — COLMAP otherwise creates a separate
+  camera model per distinct image *dimension*. One mixed-resolution set is then
+  split into unrelated intrinsics groups, which wrecks an already-small set.
+  Frames from a single video are uniform, so this is free insurance; for hand-shot
+  photos it is essential.
+- **`--SiftMatching.use_gpu 0`** — the GPU matcher **core-dumps** on this pod
+  (`Aborted (core dumped)`, apt COLMAP on the RTX 5090). CPU matching is fine at
+  these set sizes. Feature *extraction* on GPU works; only matching crashes.
+
+Check registration before spending GPU time on training:
+
+```bash
+colmap model_analyzer --path sparse/0   # look at "Registered images"
+```
+
+If `sparse/0` is missing, or registered images ≪ input images → photo set problem
+(overlap/blur), not a pipeline problem. Reshoot; note what failed.
+
+**Measured example of failure** (`photos-inbox/Location-1`, 6 stills of a
+restaurant interior): 4 verified pairs of 15 possible, **2 of 6 images
+registered, 36 points**. The set was six snapshots of different walls rather
+than a continuous orbit — no amount of flag-tuning fixes missing overlap. A
+video walkthrough is the reliable input.
 
 ## 8. Train (RECORD wall-clock + peak VRAM)
 
@@ -102,10 +127,19 @@ nvidia-smi -l 5
 
 # terminal 1:
 time /workspace/dist/bin/run_lichtfeld.sh -d /workspace/project -o /workspace/out \
-  --headless --eval --test-every 8 -i 30000
+  --headless --eval --test-every 8 --undistort -i 30000
 ```
 
+**`--undistort` is required for phone photos.** Without it training dies
+immediately with `Training error: Distorted images detected. Use --gut or
+--undistort to train on cameras with distortion.` COLMAP fits a distorted camera
+model (SIMPLE_RADIAL by default) and LichtFeld refuses to train on it. `--gut` is
+the alternative — it trains the distortion rather than removing it.
+
 First run JIT-compiles kernels (~5–15 s extra at startup — that's the PTX build, expected).
+**Verified working on an RTX 5090 / Blackwell (sm_120) 2026-07-20** — kernels JIT
+cleanly, 34–445 iter/s. This was the project's last untested build assumption.
+
 Afterwards check `cat /workspace/out/metrics.csv` — record final PSNR/SSIM and num_gaussians.
 
 ## 9. Export web formats
@@ -115,6 +149,12 @@ Afterwards check `cat /workspace/out/metrics.csv` — record final PSNR/SSIM and
 /workspace/dist/bin/run_lichtfeld.sh convert /workspace/out/splat_30000.ply /workspace/out/scene.html -f html
 ls -lh /workspace/out   # RECORD sizes of splat_30000.ply / scene.sog / scene.html
 ```
+
+**`convert` exits 134 even on success — check for the file, not the exit code.**
+It reliably reaches `100% Done`, writes a valid `scene.html`, and *then* aborts
+with `malloc_consolidate(): unaligned fastbin chunk detected` while tearing down.
+The artifact is complete; the crash is in cleanup after the write. Any automation
+(i.e. `worker/handler.py`) must test `-s scene.html` rather than `$?`.
 
 ## 10. LOCAL: download and view
 
