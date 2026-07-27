@@ -135,6 +135,13 @@ impl WorkerClient {
                         // Re-serialize the artifacts sub-object into a JSON string so
                         // it can be stored verbatim in the jobs table. If the worker
                         // sent no artifacts, leave it None (the poller substitutes {}).
+                        //
+                        // CONTRACT NOTE: this `output.artifacts` shape must stay in
+                        // lockstep with worker/handler.py, which documents (and its
+                        // TODO 7 returns) `{"artifacts": {"scene_url": ...}}` as the
+                        // handler's return value. These are two halves of one
+                        // contract — change both together, or a real (non-mock) job
+                        // will silently store nothing here.
                         let artifacts = &json["output"]["artifacts"];
                         let artifacts_json = if artifacts.is_null() {
                             None

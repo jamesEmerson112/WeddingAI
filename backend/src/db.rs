@@ -57,6 +57,34 @@ pub async fn list_active_jobs(pool: &PgPool) -> sqlx::Result<Vec<Job>> {
         .await
 }
 
+/// Repoint already-finished jobs at the configured demo scene.
+///
+/// Why this exists: the frontend used to substitute the real scene URL for the
+/// placeholder at READ time, so every historical row was fixed retroactively,
+/// for free. The backend now stamps the URL once, at the `done` transition —
+/// and `list_active_jobs` deliberately excludes `done`, so the poller never
+/// revisits a finished job. Without this, every job that completed before the
+/// demo scene was configured keeps `{"scene_url":"/demo/scene.html"}` forever
+/// and renders as the inert stand-in.
+///
+/// That is not hypothetical: the seeded demo jobs live in Railway's Postgres,
+/// which now survives redeploys, so they are exactly the rows that would break
+/// — the ones the demo walkthrough opens.
+///
+/// Idempotent by construction: it only matches the exact legacy placeholder
+/// string, so re-running it (every boot) is a no-op once converted, and it
+/// never touches a real per-job scene from an actual worker run.
+pub async fn relabel_legacy_demo_jobs(pool: &PgPool, artifacts_json: &str) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE jobs SET artifacts_json = $1 WHERE state = 'done' AND artifacts_json = $2",
+    )
+    .bind(artifacts_json)
+    .bind(crate::state::LEGACY_PLACEHOLDER_ARTIFACTS)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn set_state(pool: &PgPool, id: &str, state: &str) -> sqlx::Result<()> {
     sqlx::query("UPDATE jobs SET state = $1 WHERE id = $2")
         .bind(state)

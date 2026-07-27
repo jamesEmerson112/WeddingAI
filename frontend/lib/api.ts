@@ -58,8 +58,9 @@ export async function createUpload(): Promise<Upload> {
 }
 
 // PUT {upload_url} with the zip blob as the body.
-// The upload_url may be absolute (a real R2 presigned URL) or a relative path
-// (the local mock-upload sink). Relative paths are resolved against the API base.
+// createUpload returns an absolute URL pointing at the backend's own
+// PUT /api/uploads/{key} sink, which stores the zip on its volume. The relative
+// branch is kept as a cheap safety net in case that ever changes shape.
 export async function putZip(url: string, blob: Blob): Promise<void> {
   const target = url.startsWith("http") ? url : `${API}${url}`;
   const res = await fetch(target, { method: "PUT", body: blob });
@@ -94,91 +95,84 @@ export async function listJobs(): Promise<Job[]> {
   return res.json();
 }
 
-// The exact placeholder URL the mock poller stamps on every completed job
-// (backend/src/poller.rs). This is the ONLY value that counts as "not a real
-// scene" — compared with strict equality, never a prefix/startsWith check. A
-// real export is either an absolute R2 URL (worker/handler.py) or the
-// committed example scene below, so "starts with /demo/" would wrongly flag a
-// genuine reconstruction as the stand-in. Keep this string and its one use in
-// isPlaceholderScene() as the single source of truth.
+// How full the storage volume is. `used_bytes` is the sum of stored uploads +
+// artifacts; `limit_bytes` is the configured budget the UI fills toward (a soft
+// denominator, not the filesystem's real cap). Mirrors backend/src/routes.rs's
+// storage() handler.
+export type Storage = {
+  used_bytes: number;
+  limit_bytes: number;
+  uploads_bytes: number;
+  artifacts_bytes: number;
+  file_count: number;
+};
+
+// GET /api/storage -> Storage
+export async function getStorage(): Promise<Storage> {
+  const res = await fetch(`${API}/api/storage`, { cache: "no-store" });
+  await ensureOk(res);
+  return res.json();
+}
+
+// The exact URL of the inert stand-in scene, a small committed file at
+// public/demo/scene.html. This is the ONE value that means "no real scene" —
+// compared with strict equality, never a prefix/startsWith check, because real
+// scenes could plausibly live under /demo/ too.
 const PLACEHOLDER_SCENE_URL = "/demo/scene.html";
 
-// A real LichtFeld Studio export is committed at public/demo/scene-3041.html
-// (30.7 MB — see frontend/.gitignore's explicit exception for that one file).
-// Point NEXT_PUBLIC_DEMO_SCENE_URL at it to show it instead of the placeholder.
-// IMPORTANT: it is ONE FIXED scene (the author's apartment) reused for every
-// mock job — never treat it as if it came from any particular upload. See
-// sceneKind() below, which exists specifically so callers can't forget this.
-
-// What sceneUrl() substitutes in for PLACEHOLDER_SCENE_URL.
+// Everything the frontend knows about a job's artifacts, parsed once.
 //
-// ⚠️ Defaults to the PLACEHOLDER, not to EXAMPLE_SCENE_URL — deliberately, and
-// learned the hard way. Defaulting to the example scene was tried and shipped
-// on 2026-07-20 and BROKE PRODUCTION: the code deployed fine but Vercel did not
-// publish the 30.7 MB static asset, so every viewer pointed its iframe at a URL
-// that 404'd. Committing a file to git does NOT guarantee the host serves it,
-// and a default that assumes it does fails closed into something worse than the
-// placeholder it replaced.
-//
-// So the example scene is now strictly opt-in via NEXT_PUBLIC_DEMO_SCENE_URL,
-// set only where the file is known to be reachable:
-//   - local dev: frontend/.env sets it to /demo/scene-3041.html (works — the
-//     file is on disk and next dev serves it)
-//   - production: leave UNSET until the scene is hosted somewhere Vercel will
-//     actually serve (a Blob/bucket URL), then set it to that URL.
-// Unset => the honest "Stand-in scene" placeholder, which always exists in git
-// and is small enough that every host serves it.
-const DEMO_SCENE_URL =
-  process.env.NEXT_PUBLIC_DEMO_SCENE_URL || PLACEHOLDER_SCENE_URL;
+// The backend stamps artifacts_json on completion and is the sole authority on
+// what a job's scene URL is: it always writes ABSOLUTE URLs for scenes it
+// serves itself (off the Railway volume, /artifacts/...), and the only relative
+// value it ever writes is PLACEHOLDER_SCENE_URL, which resolves against the
+// frontend's own static files. So there is deliberately NO base-URL resolution
+// and NO client-side substitution here — the URL is used exactly as given.
+type SceneArtifacts = { scene_url?: string; is_sample?: boolean };
 
-// Pull the viewable scene URL out of a finished job.
-// artifacts_json is a JSON string the backend stamps on completion, e.g.
-// {"scene_url": "/demo/scene.html"}. Returns null if there are no artifacts yet
-// or the JSON is missing/malformed (so the viewer can show a fallback).
-export function sceneUrl(job: Job): string | null {
-  if (!job.artifacts_json) return null;
+function parseArtifacts(job: Job | null): SceneArtifacts | null {
+  if (!job?.artifacts_json) return null;
   try {
-    const artifacts = JSON.parse(job.artifacts_json) as { scene_url?: string };
-    const url = artifacts.scene_url ?? null;
-    if (url === PLACEHOLDER_SCENE_URL) {
-      return DEMO_SCENE_URL;
-    }
-    return url;
+    return JSON.parse(job.artifacts_json) as SceneArtifacts;
   } catch {
     return null;
   }
 }
 
-// Precise placeholder check: true only for the exact mock stand-in URL, never
-// a prefix match. See PLACEHOLDER_SCENE_URL above for why prefix matching
-// (e.g. startsWith("/demo/")) is wrong here — the committed example export
-// also lives under /demo/.
-export function isPlaceholderScene(url: string | null): boolean {
-  return url === PLACEHOLDER_SCENE_URL;
+// Pull the viewable scene URL out of a finished job.
+// Returns null if there are no artifacts yet or the JSON is missing/malformed
+// (so the viewer can show a "not ready" fallback).
+export function sceneUrl(job: Job): string | null {
+  return parseArtifacts(job)?.scene_url ?? null;
 }
 
-// The three states a resolved scene URL (sceneUrl()'s return value) can be
-// in, and the one place that tells them apart — so components branch on this
-// instead of comparing URL string literals themselves:
-//  - "placeholder": the literal PLACEHOLDER_SCENE_URL, unmodified. Normally
-//    unreachable, since sceneUrl() always swaps it for DEMO_SCENE_URL; only
-//    resurfaces if NEXT_PUBLIC_DEMO_SCENE_URL is explicitly set back to that
-//    same path. Gets the honest "stand-in" caption, no orbit hints.
-//  - "example": DEMO_SCENE_URL substituted in for a mock job — the committed
-//    real reconstruction by default. The orbit controls are genuinely real,
-//    but it is the SAME FIXED scene for every mock job, not built from
-//    whatever the viewer uploaded. Callers MUST show a plain label saying so
-//    — it must never be mistaken for the viewer's own result.
-//  - "real": anything else — a genuine per-job scene_url from an actual
-//    worker (an absolute R2 URL, worker/handler.py). Orbit hints, no example
-//    label — this one really was built from the viewer's own photos.
-// Returns null for a null input (no scene yet), so callers can keep handling
-// "not ready" themselves rather than folding it into this type.
+// The three kinds of scene a job can resolve to, and the one place that tells
+// them apart — so components branch on this instead of comparing URL string
+// literals themselves. Takes the Job rather than a URL because the
+// example/real distinction is carried by the artifacts JSON's `is_sample`
+// flag, not by anything visible in the URL.
+//
+//  - "placeholder": the inert stand-in at PLACEHOLDER_SCENE_URL. There is no
+//    reconstruction behind it at all, so it gets the honest "stand-in"
+//    caption and no orbit hints.
+//  - "example": a genuine reconstruction, but ONE FIXED SCENE reused for
+//    EVERY mock job — it was not built from whatever this viewer uploaded.
+//    The orbit controls are really real, which is exactly why this is
+//    load-bearing: without a label it looks like the viewer's own result.
+//    Callers MUST surface a plain "sample, not your upload" disclosure.
+//  - "real": a genuine per-job scene from an actual GPU worker run. This one
+//    really was built from the viewer's own photos, so it gets orbit hints
+//    and no sample label.
+//
+// Returns null when there is no scene yet (no job, no artifacts, malformed
+// JSON, or no scene_url), so callers keep handling "not ready" themselves
+// rather than folding it into this type.
 export type SceneKind = "placeholder" | "example" | "real";
 
-export function sceneKind(url: string | null): SceneKind | null {
-  if (url === null) return null;
-  if (isPlaceholderScene(url)) return "placeholder";
-  if (url === DEMO_SCENE_URL) return "example";
+export function sceneKind(job: Job | null): SceneKind | null {
+  const artifacts = parseArtifacts(job);
+  if (!artifacts?.scene_url) return null;
+  if (artifacts.scene_url === PLACEHOLDER_SCENE_URL) return "placeholder";
+  if (artifacts.is_sample === true) return "example";
   return "real";
 }

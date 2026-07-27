@@ -19,11 +19,11 @@ export default function ViewerPage() {
   // Three-way classification (placeholder / example / real) lives in
   // lib/api.ts's sceneKind() — see its doc comment for what each case means
   // and why the distinction matters. null here just means "no scene yet".
-  const kind = sceneKind(url);
+  const kind = sceneKind(job);
   const title = kind === "example" ? EXAMPLE_SCENE_TITLE : memoryTitle(id);
 
-  // The committed example export is 30.7 MB (21.4 MB gzipped) — on a slow
-  // connection the iframe would otherwise sit blank for 20-30s. Track load
+  // A real export is ~30 MB (21.4 MB gzipped), served from the backend — on a
+  // slow connection the iframe would otherwise sit blank for 20-30s. Track load
   // completion per-URL so the spinner reveals once onLoad fires and resets
   // correctly if the scene changes (e.g. polling flips a job to "done" while
   // this page is open). This is the React-documented "adjust state during
@@ -73,8 +73,8 @@ export default function ViewerPage() {
       }}
     >
       {url ? (
-        // scene_url may be a local path (/demo/scene.html or the committed
-        // example) or an absolute R2 URL — the iframe renders either the same
+        // scene_url is either the local /demo/scene.html stand-in or an
+        // absolute URL the backend serves — the iframe renders both the same
         // way. key={url} forces a clean remount (and a fresh load event) if
         // the URL changes instead of reusing a stale iframe.
         <iframe

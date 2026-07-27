@@ -14,8 +14,8 @@ specific room and to render the room restyled in that theme, and builds toward a
 *A real 3D Gaussian Splatting reconstruction — 1.5M splats, built from a
 42-second handheld phone video and trained on a rented RTX 5090 (details in
 "Honest status" below). This is what the pipeline produces when run manually,
-not something the deployed app generates today — the deployed app still hands
-back a placeholder scene while the video→3D hop gets wired in.*
+not something the deployed app generates today — the deployed app serves this
+one scene back as a labelled sample while the video→3D hop gets wired in.*
 
 ---
 
@@ -132,16 +132,32 @@ handling.
               │ Next.js route handlers  │   │  Axum backend        │
               │  /api/analyze  (Gemini) │   │  (Rust) on Railway   │
               │  /api/render   (Gemini) │   │  jobs + state machine│
-              │  SERVER-SIDE ONLY       │   │  Postgres            │
+              │  SERVER-SIDE ONLY       │   │  Postgres + volume   │
               └─────────────────────────┘   └──────┬───────────────┘
-                                                   │
-                                            ┌──────▼───────────────┐
-                                            │ Worker               │
-                                            │ mock poller (default)│
-                                            │ or RunPod GPU:       │
-                                            │ COLMAP → LichtFeld   │
-                                            └──────────────────────┘
+                                       zip ▲       │ zip
+                                  /artifacts│      ▼
+                                            │┌──────────────────────┐
+                                            └┤ Worker               │
+                                             │ mock poller (default)│
+                                             │ or RunPod GPU:       │
+                                             │ COLMAP → LichtFeld   │
+                                             └──────────────────────┘
 ```
+
+**The backend brokers every file transfer.** Photo zips and finished scenes both
+land on its Railway volume, so neither the browser nor the GPU worker ever holds
+storage credentials:
+
+```
+FE --zip--> BE (volume) --> GPU pod --scene.html--> BE (volume) --> FE
+```
+
+| Route | Purpose |
+|---|---|
+| `PUT /api/uploads/{uuid}` | browser stores the photo zip (streamed to disk, 200 MB cap) |
+| `GET /api/uploads/{uuid}` | worker fetches its input |
+| `PUT /api/artifacts/{name}` | worker publishes a finished scene (bearer `ADMIN_TOKEN`) |
+| `GET /artifacts/*` | public read-back, gzip-precompressed |
 
 **Job state machine:** `uploaded → queued → sfm → training → exporting → done`,
 with `failed` reachable from any state.
@@ -161,11 +177,12 @@ actually does today.*
 | `frontend/app/api/analyze`, `api/render` | the two Gemini capabilities (server-side) |
 | `frontend/lib/frames.ts` | video → evenly spaced frames, in-browser |
 | `frontend/lib/theme.ts` | downscaling, Gemini calls, caching |
-| `backend/src/routes.rs` | HTTP endpoints |
+| `backend/src/routes.rs` | HTTP endpoints + upload/artifact file storage |
 | `backend/src/db.rs` | job model + every SQL statement |
 | `backend/src/poller.rs` | advances active jobs |
 | `worker/handler.py` | GPU pipeline (blueprint) |
 | `scripts/video-to-frames.sh` | ffmpeg frame extraction for local/GPU runs |
+| `scripts/seed-demo-scene.sh` | one-time upload of the sample scene to the volume |
 
 ## Honest status
 
@@ -181,19 +198,27 @@ So judges know exactly what they are looking at:
   code issue.
 - ✅ **Video → frame extraction is live**, in-browser.
 - ✅ **Backend, job state machine and Postgres are live** and survive redeploys.
+- ✅ **Uploads are persisted** (in this build; live on the next backend deploy).
+  The photo zip is streamed to the backend's Railway volume and can be read back
+  out — earlier builds accepted the bytes and discarded them. This is what a GPU
+  worker will fetch as its input. Verified end to end locally; the deployed
+  backend picks it up on the next push.
 - ⚠️ **3D reconstruction runs in mock mode in the deployed app.** Jobs walk the
-  real state machine on real timings and return a **placeholder scene** —
-  today, uploading a video in the live app does *not* produce the
-  reconstruction described below.
-- ⚠️ **A real reconstruction exists, but it was produced manually, offline —
-  not by the deployed app.** From a 42-second handheld phone video (best ~7s
-  used, sampled at 20 fps → 140 frames): COLMAP registered 140/140 images
-  (100%) into a single model, 17,312 points, 0.89 px mean reprojection error,
-  ~2,869 keypoints/image. LichtFeld Studio then trained 1,514,776 splats in
-  3m53s on a rented RTX 5090 (held-out eval: PSNR 25.29, SSIM 0.874), exported
-  to a 30.7 MB self-contained `scene.html` with working orbit/zoom (the GIFs
-  above are recordings of it). This proves the pipeline end to end; it is not
-  yet wired into the web app's job flow.
+  real state machine on real timings, then hand back **one shared sample
+  scene** — the reconstruction below, served from the backend volume and
+  flagged `is_sample` so the UI labels it as a sample rather than passing it
+  off as your upload. Uploading a video in the live app does *not* yet produce
+  a reconstruction of your own room. The GPU worker (`worker/handler.py`) is
+  still a stub.
+- ⚠️ **The sample reconstruction was produced manually, offline — not by the
+  deployed app.** From a 42-second handheld phone video (best ~7s used, sampled
+  at 20 fps → 140 frames): COLMAP registered 140/140 images (100%) into a
+  single model, 17,312 points, 0.89 px mean reprojection error, ~2,869
+  keypoints/image. LichtFeld Studio then trained 1,514,776 splats in 3m53s on a
+  rented RTX 5090 (held-out eval: PSNR 25.29, SSIM 0.874), exported to a 30.7 MB
+  self-contained `scene.html` with working orbit/zoom (the GIFs above are
+  recordings of it). This proves the pipeline end to end; it is not yet wired
+  into the web app's job flow.
 
 The Gemini theme-design capability this hackathon requires is fully real and
 live. Venue restyling and 3D reconstruction are real, working implementations
@@ -222,7 +247,9 @@ npm run dev                   # :3000
 ```
 
 Open http://localhost:3000. Mock mode is the default, so no GPU or cloud
-credentials are needed — a job reaches `done` in about 25 seconds.
+credentials are needed — a job reaches `done` in about 25 seconds. `cargo run`
+creates `backend/data/{uploads,artifacts}` on first boot (gitignored) and
+uploads land there.
 
 Check the backend with `curl -s localhost:8080/api/health`, which reports
 process, database and config state in one request.
@@ -254,7 +281,9 @@ Names only — no values are committed anywhere, and `.env*` is gitignored.
 | `DATABASE_URL` | Postgres connection string. On Railway, set to `${{Postgres.DATABASE_URL}}`. |
 | `TEST_DATABASE_URL` | Used only by `cargo test`. |
 | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID` | Real GPU mode only. |
-| `R2_*` | Object storage for artifacts; real mode only. |
+| `DATA_DIR` | Root of the file store. Empty = `./data` locally, `/data` on Railway (the volume mount path). |
+| `ADMIN_TOKEN` | Bearer token for `PUT /api/artifacts/*`. **Empty disables that route entirely** (it 404s). |
+| `DEMO_SCENE_KEY` | Artifact filename that finished mock jobs point at, e.g. `scene-3041.html`. Empty = inert placeholder. |
 
 ## Deployment
 
@@ -263,6 +292,7 @@ Names only — no values are committed anywhere, and `.env*` is gitignored.
 | Frontend | **Vercel** | https://wedding-ai-omega.vercel.app — auto-deploys on push to `main`. Gemini route handlers run server-side here. |
 | Backend | **Railway** | https://weddingai-production.up.railway.app — auto-deploys on push via `backend/Dockerfile`. |
 | Database | **Railway Postgres** | Persists across deploys. |
+| Files | **Railway volume** | 5 GB mounted at `/data`. Holds upload zips and scene exports; served from `/artifacts`. Seed the sample scene once with `scripts/seed-demo-scene.sh` (needs `ADMIN_TOKEN`). |
 | GPU worker | **RunPod** | On demand; not required for the demo. |
 
 CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy -D

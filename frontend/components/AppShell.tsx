@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import StorageBar from "@/components/StorageBar";
 
 // Which nav pill a route belongs to. Processing (/jobs/[id]) is part of the
 // "New" flow; the viewer belongs with "Memories" — mirrors the prototype.
@@ -52,6 +53,7 @@ export default function AppShell() {
         </nav>
       </div>
       <div className="flex items-center gap-4">
+        <StorageBar />
         <span className="hidden text-[13px] font-medium text-mocha sm:inline">
           Help
         </span>

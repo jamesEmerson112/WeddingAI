@@ -30,10 +30,10 @@ const GRADIENTS: [string, string][] = [
 
 const META_PREFIX = "weddingai:memory:";
 
-// Title for the committed example scene (frontend/public/demo/scene-3041.html,
-// substituted for the mock placeholder — see lib/api.ts's sceneKind()), used
-// in place of the usual hash-derived name whenever a job resolves to it. The
-// scene is genuinely a startup office, so a random name like "The First
+// Title for the one sample reconstruction the backend serves for every mock
+// job (flagged `is_sample` in artifacts_json — see lib/api.ts's sceneKind()),
+// used in place of the usual hash-derived name whenever a job resolves to it.
+// The scene is genuinely a startup office, so a random name like "The First
 // Dance" over a picture of a desk would read as broken. Both the viewer
 // (app/viewer/[id]/page.tsx) and the Memories grid (app/jobs/page.tsx) apply
 // this override so a card's title always matches what opening it shows.

@@ -46,9 +46,16 @@ async fn advance_mock(state: &AppState, job: &db::Job) -> sqlx::Result<()> {
     };
 
     if next == "done" {
-        // Reaching 'done' stamps the placeholder scene so the viewer has something
-        // to show. In real mode this URL would come from the worker's artifacts.
-        db::set_done(&state.db, &job.id, r#"{"scene_url":"/demo/scene.html"}"#).await?;
+        // Reaching 'done' needs a scene to point the viewer at. In real mode
+        // this comes from the worker's artifacts; in mock mode the backend
+        // chooses it — see Config::demo_artifacts_json for what it means and
+        // why `is_sample` matters. `None` = no demo scene configured, so fall
+        // back to the inert stand-in the frontend ships itself.
+        let artifacts = state
+            .config
+            .demo_artifacts_json()
+            .unwrap_or_else(|| crate::state::LEGACY_PLACEHOLDER_ARTIFACTS.to_string());
+        db::set_done(&state.db, &job.id, &artifacts).await?;
     } else {
         db::set_state(&state.db, &job.id, next).await?;
     }

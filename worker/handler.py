@@ -10,29 +10,51 @@ The pipeline in one line:
     photos.zip  ->  COLMAP (SfM)  ->  LichtFeld Studio (train)  ->  scene.html/.sog
 ------------------------------------------------------------------------------
 
+File transfer is BROKERED BY THE BACKEND, not R2 directly. Both sides talk
+HTTP to the backend's own endpoints (PUBLIC_BASE_URL):
+    GET  {PUBLIC_BASE_URL}/api/uploads/{uuid}       -> streams the photos zip
+    PUT  {PUBLIC_BASE_URL}/api/artifacts/{name}     -> uploads a finished artifact
+                                                        (Authorization: Bearer ADMIN_TOKEN)
+    GET  {PUBLIC_BASE_URL}/artifacts/{name}         -> public read-back URL
+
 Input event (RunPod passes this as `event["input"]`):
     {
-        "job_id":     str,  # our backend's job UUID; also the R2 output prefix
-        "upload_key": str,  # R2 object key of the uploaded photos zip, e.g. "uploads/<uuid>.zip"
+        "job_id":     str,  # our backend's job UUID; also the artifact name prefix
+        "upload_key": str,  # backend upload key of the photos zip, e.g. "uploads/<uuid>.zip"
+                             # (the worker must parse the bare uuid out of this to
+                             # call GET /api/uploads/{uuid} — see TODO 1 below)
         "iters":      int   # training iterations (capped by the backend, e.g. 7000-30000)
     }
 
 Output (returned to RunPod, surfaced to the backend via /status):
     {
-        "scene_url": str    # public R2 URL of the self-contained scene.html
+        "artifacts": {
+            "scene_url": str   # public URL of the self-contained scene.html,
+                                # e.g. "https://.../artifacts/jobs/<job_id>/scene.html"
+        }
     }
-    (Phase 1 will likely also return sog_url, metrics, timings, and num_gaussians;
-     the backend only requires scene_url to mark a job "done".)
+    (Phase 1 will likely also add sog_url, metrics, timings, and num_gaussians
+     under "artifacts"; the backend only requires scene_url to mark a job "done".)
+
+    *** CONTRACT NOTE: this "artifacts" nesting must stay in lockstep with
+    backend/src/worker_client.rs, which parses COMPLETED jobs as
+    `json["output"]["artifacts"]` and stores that sub-object verbatim as
+    `artifacts_json`. If this file's return shape and worker_client.rs's parse
+    path ever disagree again, a real (non-mock) job silently stores nothing —
+    change both halves of this contract together. ***
 
 Progress: each stage calls runpod.serverless.progress_update(event, "<stage>")
 so the backend's poller can map RunPod status -> our state machine
 (uploaded -> queued -> sfm -> training -> exporting -> done) without an inbound
-webhook.
+webhook. worker_client.rs reads these back as `output.stage` while the RunPod
+status is IN_PROGRESS.
 """
 
 # The RunPod SDK is only present inside the worker container (see Dockerfile:
-# `pip install runpod boto3`). It is intentionally imported here so the shape of
-# the real handler is clear, even though the body below is still a stub.
+# `pip install runpod requests`). It is intentionally imported here so the shape
+# of the real handler is clear, even though the body below is still a stub.
+# (No boto3/S3 client needed any more — the backend brokers file transfer over
+# plain HTTP; see the module docstring.)
 import runpod
 
 
@@ -43,10 +65,15 @@ def handler(event):
     upload_key = job_input["upload_key"]
     iters = job_input.get("iters", 30000)
 
-    # TODO(Phase 1) 1. DOWNLOAD: pull the photos zip from R2.
-    #   - boto3 S3 client pointed at the R2 endpoint (env: R2_ENDPOINT,
-    #     R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET).
-    #   - client.download_file(R2_BUCKET, upload_key, "/work/photos.zip").
+    # TODO(Phase 1) 1. DOWNLOAD: pull the photos zip from the backend (not R2 —
+    #   the backend brokers all file transfer; see module docstring).
+    #   - upload_key looks like "uploads/<uuid>.zip"; parse out the bare uuid
+    #     (e.g. upload_key.removeprefix("uploads/").removesuffix(".zip")) since
+    #     the backend route is GET /api/uploads/{uuid}, not the raw key.
+    #   - requests.get(f"{PUBLIC_BASE_URL}/api/uploads/{uuid}", stream=True),
+    #     write the response body to "/work/photos.zip" in chunks.
+    #   - env: PUBLIC_BASE_URL (no auth needed for this GET — it's a public
+    #     read of an upload the browser itself PUT to the backend).
     #   - progress_update(event, "queued").
 
     # TODO(Phase 1) 2. UNZIP: extract photos into a COLMAP-shaped project dir.
@@ -94,14 +121,22 @@ def handler(event):
     #   - run_lichtfeld.sh convert out/splat_<iters>.ply out/scene.sog  -f sog
     #       (raw SOG, for a future custom viewer / smaller transfers)
 
-    # TODO(Phase 1) 6. UPLOAD: push artifacts to R2 under jobs/{job_id}/.
-    #   - client.upload_file("out/scene.html", R2_BUCKET, f"jobs/{job_id}/scene.html")
-    #   - also scene.sog and metrics.csv.
-    #   - scene_url = f"{R2_PUBLIC_BASE}/jobs/{job_id}/scene.html".
+    # TODO(Phase 1) 6. UPLOAD: push artifacts to the backend under jobs/{job_id}/
+    #   (not R2 — the backend brokers all file transfer; see module docstring).
+    #   - PUT {PUBLIC_BASE_URL}/api/artifacts/jobs/{job_id}/scene.html with the
+    #     file body, header "Authorization: Bearer {ADMIN_TOKEN}".
+    #   - also scene.sog and metrics.csv the same way, once those are wired up.
+    #   - scene_url = f"{PUBLIC_BASE_URL}/artifacts/jobs/{job_id}/scene.html"
+    #     (the PUBLIC read-back route — no bearer token needed for the GET).
+    #   - env: PUBLIC_BASE_URL, ADMIN_TOKEN.
 
     # TODO(Phase 1) 7. RETURN: hand the artifact URL(s) back to RunPod.
     #   - progress_update(event, "done")
-    #   - return {"scene_url": scene_url}  # plus sog_url/metrics/timings later.
+    #   - return {"artifacts": {"scene_url": scene_url}}  # plus sog_url/metrics/
+    #     timings alongside scene_url under "artifacts" later.
+    #   - CONTRACT NOTE: this "artifacts" nesting is read verbatim by
+    #     backend/src/worker_client.rs's `json["output"]["artifacts"]` parse on
+    #     COMPLETED — keep the two in lockstep (see module docstring).
 
     raise NotImplementedError(
         f"worker stub: pipeline not implemented for job {job_id} "

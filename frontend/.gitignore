@@ -48,9 +48,3 @@ next-env.d.ts
 # default — a 16 MB export already got swept into history (d6e5e04) and is stuck
 # there permanently. Serve new ones from object storage rather than committing.
 /public/demo/scene-*.html
-
-# Deliberate exception: this one example reconstruction IS committed (30.7 MB) so
-# the deployed demo can show a real scene instead of the placeholder. A conscious
-# trade of repo weight for a working public demo — not a precedent. Anything
-# beyond this single file should go to a bucket.
-!/public/demo/scene-3041.html

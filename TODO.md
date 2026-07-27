@@ -66,28 +66,40 @@ build + lint green, smoke-tested on a local prod server.
       core-dumps on this pod), and `--undistort` for phone lens distortion.
       Also: `convert` exits **134 even on success** — test for the file, not `$?`.
 - [ ] Run it on real footage: video → frames → COLMAP → train → `convert` →
-      scp down → `frontend/public/demo/scene.html`. **No backend work needed**:
-      `poller.rs:51` hardcodes `{"scene_url":"/demo/scene.html"}`, so replacing
-      that one static file makes every memory in the deployed app show the real
-      scene.
+      scp down → upload to the backend volume with `scripts/seed-demo-scene.sh`
+      (needs `ADMIN_TOKEN`), then set `DEMO_SCENE_KEY` to the artifact name.
+      Finished mock jobs are stamped with that scene plus `"is_sample": true`,
+      and jobs that finished before the key was set are repointed on the next
+      backend boot (`db::relabel_legacy_demo_jobs`) — no reseed needed.
+      Committing the export instead does NOT work: a 30 MB file in
+      `frontend/public/demo/` is not published by Vercel and 404s in the
+      deployed viewer, which is what prompted this whole change.
 - [ ] **TERMINATE THE POD** when done — still billing ~$1/hr.
 
-### ⛔ THE DATA BLOCKER — uploads never reach the GPU
+### THE DATA BLOCKER — storage CLOSED, worker still stubbed
 
-**Frames uploaded through the frontend are discarded on arrival.**
-`backend/src/routes.rs:111-120` is explicit: *"Accept the uploaded bytes, log
-how many there were, and throw them away. There is nowhere to actually store
-the data."* The upload looks completely successful — frames extract, the job
-walks to `done`, the viewer opens — but nothing is persisted and nothing is
-handed to a worker.
+**Step 1 is done: uploaded bytes are now kept.** The old `mock_upload` handler
+that logged the byte count and threw the zip away is gone. In its place the
+backend brokers every file transfer off its Railway volume, so neither the
+browser nor the GPU worker holds storage credentials:
 
-This is why the 3D run is currently a **manual, out-of-band** process
-(`scripts/video-to-frames.sh` → `scp` → pod) rather than something the product
-does. Closing it needs three pieces, in this order:
+    FE --zip--> BE (volume) --> GPU pod --scene.html--> BE (volume) --> FE
 
-1. **Storage** (1.7 Phase 2 below) — a Railway Bucket so `mock_upload` writes
-   the zip somewhere instead of dropping it. Everything else depends on this;
-   without it there is nothing for a worker to fetch.
+- [x] **Storage** — `PUT /api/uploads/{uuid}` streams the photo zip to disk
+      under `DATA_DIR/uploads/`; `GET /api/uploads/{uuid}` streams it back out,
+      which is how the worker fetches its input. `PUT /api/artifacts/{name}`
+      ingests finished scenes (bearer `ADMIN_TOKEN`; the route 404s when that
+      var is unset) and `GET /artifacts/*` serves them publicly via tower-http
+      `ServeDir` with `precompressed_gzip()`. New backend env vars: `DATA_DIR`,
+      `ADMIN_TOKEN`, `DEMO_SCENE_KEY`. `GET /api/health` reports `data_dir`,
+      `data_dir_writable` and `demo_scene_key`.
+      **No R2, no S3 SDK, no presigning** — see ROADMAP "Locked decisions" for
+      why that decision was reversed.
+
+The remaining two pieces are unchanged, and **the pipeline still does not run
+for real** — the 3D run is still a manual, out-of-band process
+(`scripts/video-to-frames.sh` → `scp` → pod):
+
 2. **RunPod wiring** — `MOCK_MODE=false` plus `RUNPOD_API_KEY` and
    `RUNPOD_ENDPOINT_ID` on the Railway backend service (names already stubbed in
    `backend/.env.example`; the seam is `AppState::new` in `state.rs`, which is
@@ -96,22 +108,33 @@ does. Closing it needs three pieces, in this order:
 3. **The worker itself** — `worker/handler.py` is still a stub ending in
    `raise NotImplementedError`. It needs the real COLMAP → train → convert →
    upload body, using the corrected flags recorded in `docs/phase0-runbook.md`.
+   Its TODOs now describe the backend contract rather than boto3/R2: download
+   via `GET {PUBLIC_BASE_URL}/api/uploads/{uuid}`, publish via
+   `PUT {PUBLIC_BASE_URL}/api/artifacts/jobs/{job_id}/scene.html` with
+   `Authorization: Bearer {ADMIN_TOKEN}`, and return
+   `{"artifacts": {"scene_url": ...}}` — a shape `worker_client.rs` parses
+   verbatim, so the two must change together.
 
-Note (2) alone does nothing: pointing the backend at RunPod without (1) just
-means the worker is handed an upload key for bytes that were never stored, and
-without (3) there is no endpoint to call. Sequence matters.
+Note (2) alone still does nothing: without (3) there is no endpoint to call.
+Sequence matters.
 
-## 1.7 Storage: Postgres + volume (Phase 1 of 3 done)
+## 1.7 Storage: Postgres + volume (Phases 1 and 2a done)
 
 - [x] Phase 1: SQLite → Postgres, verified against real Postgres 16 (`dcb8392`,
       UNPUSHED — pushing before Railway Postgres exists takes the backend down).
 - [ ] **USER: provision Railway Postgres**, set backend `DATABASE_URL` to
       `${{Postgres.DATABASE_URL}}`, then push + reseed.
-- [ ] Phase 2: persist the upload zip + the ≤8 downscaled photos; `photos`
-      table; GET/POST photo routes. **Use a Railway BUCKET, not a volume** —
-      S3-compatible, free egress, no 5 GB / no-replicas limits, and it matches
-      the R2_* env stubs + presigning TODO the repo already has (see CLAUDE.md
-      "STORAGE FOR IMAGE BYTES"). Needs `aws-sdk-s3` added to Cargo.toml.
+- [x] Phase 2a: persist the upload zip. **Railway VOLUME, not a bucket** —
+      5 GB on Hobby, confirmed attached at `/data`. The backend streams the zip
+      to `DATA_DIR/uploads/` and serves it back to the worker; scenes come home
+      through `PUT /api/artifacts/*`. No `aws-sdk-s3`, no presigning, no R2 —
+      reversal recorded in ROADMAP "Locked decisions".
+- [ ] Phase 2b: the ≤8 downscaled photos; `photos` table; GET/POST photo
+      routes. Not started — the zip is stored, but nothing unpacks or indexes
+      the individual photos yet.
+- [ ] **Retention: nothing deletes old uploads.** The 5 GB volume fills at
+      ~25 uploads (`MAX_UPLOAD_BYTES` is 200 MB). Needs a sweep before this
+      takes real traffic.
 - [ ] Phase 3: real gallery thumbnails (replacing the CSS gradient at
       `frontend/app/jobs/page.tsx:129`) + Studio loading any past memory.
 - [x] Photo decision (user, ~01:40 UTC): **try the 6–7 views we already have
@@ -130,9 +153,10 @@ without (3) there is no endpoint to call. Sequence matters.
 - [x] **Video upload works in the deployed product**: `frontend/lib/frames.ts`
       extracts ~110 frames in-browser (`<video>`+`<canvas>`) and feeds them to
       the existing JSZip → PUT → job path, so no backend/worker change was
-      needed. Upload size is fine — `backend/src/routes.rs:34-37` already caps
-      the mock sink at 500 MB and the PUT goes straight to Railway (never
-      through Vercel's 4.5 MB serverless limit). Progress row + abort/supersede
+      needed. Upload size is fine — the backend caps a single zip at
+      `MAX_UPLOAD_BYTES` (200 MB, enforced by `RequestBodyLimitLayer`) and the
+      PUT goes straight to Railway (never through Vercel's 4.5 MB serverless
+      limit). Progress row + abort/supersede
       guards on `app/page.tsx`. Build + lint green.
 - [x] `worker/Dockerfile` + `handler.py` step 2b: ffmpeg frame extraction
       documented for the GPU path (blueprint only — neither builds yet).
@@ -223,5 +247,6 @@ All copy lives in `docs/submission/` (separate file per form field).
 ## Stretch (not required for submission)
 
 - [ ] Real 3D pipeline: RunPod serverless worker (Phase 1 stub → real COLMAP +
-      LichtFeld) + Cloudflare R2 artifacts. `RUNPOD_API_KEY` still to be added to
-      `backend/.env`; R2 account/bucket/credentials not created yet.
+      LichtFeld). Artifact storage is no longer a blocker — the backend serves
+      them off its volume. `RUNPOD_API_KEY` / `RUNPOD_ENDPOINT_ID` still to be
+      added to `backend/.env`.

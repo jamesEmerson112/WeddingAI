@@ -31,8 +31,10 @@ case "$health" in
 esac
 echo
 
-# The mock upload sink only counts bytes and discards them, so any small
-# payload works — the demo scene is a placeholder regardless of what's sent.
+# A tiny payload is fine: these seeded jobs run in mock mode, which never reads
+# the uploaded zip — the scene each one resolves to is the configured demo scene
+# (or the placeholder), not anything derived from these bytes. The bytes ARE now
+# stored on the volume (a few dozen bytes each), they're just never processed.
 payload=$(mktemp)
 printf 'weddingai-demo-seed' > "$payload"
 trap 'rm -f "$payload"' EXIT

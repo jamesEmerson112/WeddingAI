@@ -10,8 +10,35 @@ Guiding principle: push all hard/GPU/C++ work into the worker (Python + a prebui
 
 - **Scope:** learning/portfolio. Minimal auth, no payments, must scale to ~$0 when idle.
 - **FE:** Next.js on Vercel. **BE:** Rust/Axum on Fly.io (explicit learning goal — kept small). **DB:** SQLite via sqlx.
-- **GPU worker:** RunPod serverless (min-workers 0, pay per second). **Artifacts:** Cloudflare R2 (S3-compatible, zero egress fees — decisive since viewers repeatedly download multi-MB scenes).
+- **GPU worker:** RunPod serverless (min-workers 0, pay per second). ~~**Artifacts:** Cloudflare R2 (S3-compatible, zero egress fees — decisive since viewers repeatedly download multi-MB scenes).~~ **SUPERSEDED 2026-07-20 — see below.**
 - **Phase 0 is manual** — run the whole pipeline by hand before any web code.
+
+### Superseded: artifacts on Cloudflare R2 (2026-07-20)
+
+**Now:** the backend stores uploads and artifacts on its own **Railway volume**
+(5 GB, Hobby plan) and brokers every file transfer over plain HTTP:
+
+```
+FE --zip--> BE (volume) --> GPU pod --scene.html--> BE (volume) --> FE
+```
+
+`PUT/GET /api/uploads/{uuid}` carries the photo zip in and back out to the
+worker; `PUT /api/artifacts/{name}` (bearer `ADMIN_TOKEN`) ingests finished
+scenes and `GET /artifacts/*` serves them via tower-http `ServeDir` with
+`precompressed_gzip()`.
+
+**Why the reversal:** R2 buys zero-egress object storage, but at this scale it
+costs an S3 SDK (`aws-sdk-s3`), presigning code on `POST /api/uploads`, and a
+second set of credentials to distribute — for a demo that stores one sample
+scene and a handful of zips. The volume needs none of that: `std::fs` plus a
+static file service, and neither the browser nor the GPU pod holds any storage
+credential. The `R2_*` env stubs are gone from `backend/.env.example` and the
+worker uses `PUBLIC_BASE_URL` + `ADMIN_TOKEN` instead of boto3.
+
+**What this costs:** egress now comes out of Railway rather than a zero-egress
+CDN (~21 MB gzipped per viewer load of the sample scene), the volume is capped
+at 5 GB, and nothing prunes old uploads yet. Revisit if scenes ever accumulate
+per-job rather than being one shared sample.
 
 ## Verified repo facts the plan relies on (from source exploration)
 
@@ -45,8 +72,8 @@ Guiding principle: push all hard/GPU/C++ work into the worker (Python + a prebui
 
 **Goal:** one reproducible container; input = photos-zip URL, output = artifact URLs.
 
-- **Image (multi-stage):** builder = `nvidia/cuda:12.8-devel-ubuntu24.04` + gcc-14/vcpkg → build CUDA COLMAP + LichtFeld `BUILD_PORTABLE=ON` → `/dist`. Runtime = `nvidia/cuda:12.8-runtime-ubuntu24.04` + `/dist` + COLMAP + Python 3 + `runpod` SDK + `boto3` + `handler.py`. Build on a pod or CI (no local CUDA), push to GHCR.
-- **`handler.py` flow:** download/unzip photos → guardrails (min photo count, zip size cap, iteration cap) → COLMAP (clear user-facing error if reconstruction fails) → headless train → `convert` to `.sog` + `.html` → upload artifacts + `metrics.csv` to R2 `jobs/<job_id>/` → report stages via `runpod.serverless.progress_update` (readable from RunPod's `/status` — no inbound webhook needed) → return `{status, artifacts, timings, num_gaussians}`.
+- **Image (multi-stage):** builder = `nvidia/cuda:12.8-devel-ubuntu24.04` + gcc-14/vcpkg → build CUDA COLMAP + LichtFeld `BUILD_PORTABLE=ON` → `/dist`. Runtime = `nvidia/cuda:12.8-runtime-ubuntu24.04` + `/dist` + COLMAP + Python 3 + `runpod` SDK + `requests` (was `boto3` — see the superseded R2 decision) + `handler.py`. Build on a pod or CI (no local CUDA), push to GHCR.
+- **`handler.py` flow:** download/unzip photos (`GET {PUBLIC_BASE_URL}/api/uploads/{uuid}`) → guardrails (min photo count, zip size cap, iteration cap) → COLMAP (clear user-facing error if reconstruction fails) → headless train → `convert` to `.sog` + `.html` → upload artifacts + `metrics.csv` to `PUT {PUBLIC_BASE_URL}/api/artifacts/jobs/<job_id>/...` with `Authorization: Bearer {ADMIN_TOKEN}` → report stages via `runpod.serverless.progress_update` (readable from RunPod's `/status` — no inbound webhook needed) → return `{status, artifacts, timings, num_gaussians}`.
 - **Endpoint config:** min workers 0, max 1–2, FlashBoot on, GPU filter Turing+ only (T4/A4000/A5000/3090/4090/L4) to satisfy the SM 75 floor.
 
 **Done when:** a cold-start invocation with a zip URL completes end-to-end and the returned `sog_url`/`html_url` render. Record cold-start time + GPU-seconds per job.
@@ -56,15 +83,15 @@ Guiding principle: push all hard/GPU/C++ work into the worker (Python + a prebui
 **Goal:** minimal Axum service — where the Rust learning happens, sized so it can't sink the project.
 
 - **State machine:** `uploaded → queued → sfm → training → exporting → done` (+ `failed` from any state). SQLite row: `id, state, created_at, runpod_id, artifacts_json, error_msg` (`backend/migrations/0001_jobs.sql`).
-- **Endpoints:** `POST /api/uploads` (presigned R2 PUT URL — FE uploads zip directly), `POST /api/jobs` (create row, call RunPod `/run`, store `runpod_id`), `GET /api/jobs/:id` (state + artifacts), `GET /api/jobs` (gallery/list).
+- **Endpoints:** `POST /api/uploads` (~~presigned R2 PUT URL~~ → returns a URL for the backend's own `PUT /api/uploads/{uuid}` sink, see the superseded R2 decision), `POST /api/jobs` (create row, call RunPod `/run`, store `runpod_id`), `GET /api/jobs/:id` (state + artifacts), `GET /api/jobs` (gallery/list).
 - **Progress:** one Tokio background task polls RunPod `/status/{runpod_id}` for active jobs, maps status + `stage` onto the state machine. FE polls `GET /api/jobs/:id`. (ZMQ live-telemetry feed = stretch, only after the happy path works.)
 - Files: `backend/src/main.rs`, `routes.rs`, `runpod.rs`.
 
-**Done when:** full flow via `curl` only: presign → PUT zip → create job → state walks `queued→sfm→training→exporting→done` → artifact URLs resolve.
+**Done when:** full flow via `curl` only: `POST /api/uploads` → PUT zip → create job → state walks `queued→sfm→training→exporting→done` → artifact URLs resolve.
 
 ## Phase 3 — Next.js frontend ($0, Vercel free tier)
 
-- **Upload:** drag-and-drop multi-photo, client-side zip (JSZip), presigned PUT to R2 (backend never proxies bytes), inline guidance (40–150 JPGs, one place, good overlap), upload progress bar.
+- **Upload:** drag-and-drop multi-photo, client-side zip (JSZip), PUT to the backend (~~presigned PUT to R2, backend never proxies bytes~~ — the backend does proxy bytes now, streamed to disk rather than buffered; see the superseded R2 decision), inline guidance (40–150 JPGs, one place, good overlap), upload progress bar.
 - **Status page:** poll job; stepper UI (`Queued → Structure-from-motion → Training → Exporting → Done`); surface `failed` with the worker's actionable message.
 - **Viewer (MVP):** the self-contained HTML export in an `<iframe>` — zero viewer code, guaranteed to render. **Stretch:** custom SOG viewer component (PlayCanvas/supersplat-viewer) for smaller transfers + own UI chrome.
 - Files: `frontend/app/upload/page.tsx`, `frontend/app/jobs/[id]/page.tsx`.
@@ -74,7 +101,7 @@ Guiding principle: push all hard/GPU/C++ work into the worker (Python + a prebui
 ## Phase 4 — Polish, guardrails, portfolio (negligible cost)
 
 - Portfolio README + architecture diagram + honest "what I learned in Rust" section.
-- **Demo gallery:** 3–5 pre-baked scenes from R2 (site impresses even with cold workers).
+- **Demo gallery:** 3–5 pre-baked scenes served from `/artifacts` on the backend volume (site impresses even with cold workers).
 - **Cost guardrails (do not skip):** iteration cap (≤30k), photo/zip size caps (FE + worker), per-day job cap, max 1 concurrent worker, min-workers 0 + idle timeout, global kill-switch env var, GPU-seconds logging per job.
 - **Photo-capture guidance page** (60–80% overlap, orbit subject, avoid blur/reflections/textureless surfaces) — the single biggest lever on success rate.
 
@@ -85,7 +112,7 @@ Guiding principle: push all hard/GPU/C++ work into the worker (Python + a prebui
 1. **COLMAP fails on bad photo sets** → capture-guidance page, up-front photo-count validation, actionable error messages, `sequential_matcher` for walkthroughs.
 2. **Worker image build pain** (slow vcpkg, CUDA version matching) → build once on pod/CI, cache in registry, pin CUDA 12.8, always `BUILD_PORTABLE=ON`.
 3. **RunPod cold starts** (image pull + PTX JIT) → lean runtime image, FlashBoot, demo gallery up front, honest "spinning up a GPU" status.
-4. **Artifact sizes / SM mismatch** → serve raw SOG via zero-egress R2, cap iterations, GPU filter Turing+.
+4. **Artifact sizes / SM mismatch** → serve raw SOG (gzipped, off the backend volume — egress is Railway's now, not zero-egress R2's), cap iterations, GPU filter Turing+.
 5. **Rust learning curve stalls the BE** → Rust surface stays CRUD + proxy + one poll loop; complexity lives in Python (worker) and TS (FE).
 
 ## Budget

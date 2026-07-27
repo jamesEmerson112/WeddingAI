@@ -77,9 +77,14 @@ FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS runtime
 # ENV PATH="/dist/bin:${PATH}"
 
 # TODO(Phase 1) 8. Python worker deps.
-#   runpod = serverless SDK (long-polls for jobs, progress_update, start()).
-#   boto3  = S3 client for Cloudflare R2 (download upload_key, upload artifacts).
-# RUN pip3 install --break-system-packages --no-cache-dir runpod boto3
+#   runpod   = serverless SDK (long-polls for jobs, progress_update, start()).
+#   requests = plain HTTP to the backend, which brokers all file transfer.
+#
+#   NOT boto3 / not R2 any more: the backend stores uploads and artifacts on its
+#   own Railway volume and exposes them over HTTP, so this container needs two
+#   env vars (PUBLIC_BASE_URL, ADMIN_TOKEN) instead of five R2 credentials. Set
+#   both on the RunPod endpoint, not in this image. See handler.py's docstring.
+# RUN pip3 install --break-system-packages --no-cache-dir runpod requests
 
 WORKDIR /app
 

@@ -6,12 +6,20 @@ edition = "2024"
 [dependencies]
 axum = "0.8.9"
 dotenvy = "0.15.7"
+# TryStreamExt, to adapt an axum body stream into something StreamReader accepts.
+futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate"] }
 tokio = { version = "1.53.0", features = ["full"] }
-tower-http = { version = "0.7.0", features = ["cors"] }
+# `io` gives StreamReader, which turns an axum request body into an AsyncRead so
+# a multi-hundred-MB upload can be copied straight to disk instead of buffered.
+tokio-util = { version = "0.7.17", features = ["io"] }
+# `fs` brings ServeDir, used to serve scene artifacts off the Railway volume.
+# `limit` brings RequestBodyLimitLayer — the ONLY body cap that works for
+# handlers taking a raw `Body`; see the note on MAX_UPLOAD_BYTES in routes.rs.
+tower-http = { version = "0.7.0", features = ["cors", "fs", "limit"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.24.0", features = ["v4"] }

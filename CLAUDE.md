@@ -59,10 +59,15 @@ matters solely if LichtFeld is ever rebuilt.
 Nothing is stranded on the pod — the reconstruction artifacts are all local
 (see the reconstruction entry below).
 
-**Deliberately not built** (designed, not started): storage Phases 2-3 — the
-photo gallery. Use a **Railway Bucket**, not a volume (see "STORAGE FOR IMAGE
-BYTES"). Also unwired: the generated-images→LichtFeld 3D hop, and the permissive
-CORS still needs restricting to the Vercel domain.
+**File storage now exists** — the backend brokers uploads and scene artifacts
+off its 5 GB Railway volume (`PUT/GET /api/uploads/{uuid}`,
+`PUT /api/artifacts/*`, `GET /artifacts/*`). The **Railway Bucket / R2 plan is
+dead**; see the storage bullet in Deployment state.
+
+**Deliberately not built** (designed, not started): the photo gallery — the zip
+is stored, but nothing unpacks or indexes individual photos, and nothing prunes
+old uploads. Also unwired: the generated-images→LichtFeld 3D hop, and the
+permissive CORS still needs restricting to the Vercel domain.
 
 ## Fresh machine setup (read this FIRST on a new computer)
 
@@ -72,8 +77,8 @@ into a tracked file** — only the variable NAMES belong in git.
 
 | File (gitignored) | Variables | Where to get the values |
 |---|---|---|
-| `frontend/.env` | `GEMINI_API_KEY`, `NEXT_PUBLIC_API_URL` | Key: Vercel → WeddingAI → Settings → Environment Variables (Production). URL: the Railway backend domain. |
-| `backend/.env` | `MOCK_MODE`, `PORT`, `PUBLIC_BASE_URL`, `DATABASE_URL`, `TEST_DATABASE_URL`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `R2_*` | `cp backend/.env.example backend/.env` — the local Postgres defaults already work; RunPod/R2 only matter in real mode. |
+| `frontend/.env` | `GEMINI_API_KEY` only | Vercel → WeddingAI → Settings → Environment Variables (Production). `NEXT_PUBLIC_API_URL` is listed in `.env.example` but is deliberately NOT set locally — `lib/api.ts` falls back to `http://localhost:8080`, which is what you want in dev. Only set it to point a local frontend at the deployed backend. |
+| `backend/.env` | `MOCK_MODE`, `PORT`, `PUBLIC_BASE_URL`, `DATABASE_URL`, `TEST_DATABASE_URL`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `DATA_DIR`, `ADMIN_TOKEN`, `DEMO_SCENE_KEY`, `STORAGE_LIMIT_BYTES` | `cp backend/.env.example backend/.env` — the local Postgres defaults already work; RunPod only matters in real mode. **`R2_*` are GONE** (see the storage note in Deployment state). Leave `DATA_DIR` empty for `./data`; `ADMIN_TOKEN` is only needed to upload artifacts locally; `STORAGE_LIMIT_BYTES` empty = 5 GiB (the header storage bar's denominator). |
 | `.env.pod` (repo root) | `POD_SSH_USER`, `POD_SSH_HOST`, `POD_SSH_PORT`, `POD_SSH_KEY` | RunPod dashboard → the pod's SSH details. Only needed to touch the GPU pod. |
 | `photos-inbox/` | — | Local test photos; not in git. Re-add if needed, or shoot a video and use `scripts/video-to-frames.sh`. |
 
@@ -84,7 +89,9 @@ cd backend && docker compose up -d && cargo run    # Postgres must be up first
 cd frontend && npm install && npm run dev
 ```
 
-Sanity check: `curl -s localhost:8080/api/health` should report `"db":"ok"`.
+Sanity check: `curl -s localhost:8080/api/health` should report `"db":"ok"` and
+`"data_dir_writable":true`. `cargo run` creates `backend/data/{uploads,artifacts}`
+on boot (gitignored via `backend/data/` in the root `.gitignore`).
 
 ## Commands
 
@@ -122,12 +129,30 @@ run fmt/clippy/test and the frontend build locally before pushing. No
 ## Architecture
 
 Three components; the frontend talks only to the backend, the backend talks to a
-worker:
+worker. **The backend is also the file broker** — every byte in either direction
+goes through it and lands on its Railway volume, so neither the browser nor the
+GPU pod holds storage credentials:
 
 ```
 Next.js FE (:3000) → Axum BE (:8080) → worker: mock poller (default) OR RunPod GPU
-                                        artifacts → Cloudflare R2 (real mode)
+
+FE --zip--> BE (volume) --> GPU pod --scene.html--> BE (volume) --> FE
 ```
+
+The four routes that implement it (`routes.rs`):
+
+| Route | Purpose |
+|---|---|
+| `PUT /api/uploads/{uuid}` | browser stores the photo zip; streamed to disk, capped at `MAX_UPLOAD_BYTES` (200 MB) |
+| `GET /api/uploads/{uuid}` | worker fetches its input |
+| `PUT /api/artifacts/{*name}` | worker (or a human) publishes a scene; bearer `ADMIN_TOKEN`, **404s when that var is unset** |
+| `GET /artifacts/*` | public read-back via tower-http `ServeDir` with `precompressed_gzip()` |
+
+Gotchas worth not rediscovering: the cap MUST use `RequestBodyLimitLayer`, not
+`DefaultBodyLimit` (the latter is only consulted by `Bytes`-based extractors, so
+a raw-`Body` handler silently ignores it); and re-uploading a plain artifact
+deletes any stale `<name>.gz` sibling, because `ServeDir` prefers the `.gz` for
+every gzip-accepting client — upload the plain file first, then the `.gz`.
 
 **Job state machine** (the spine of everything):
 `uploaded → queued → sfm → training → exporting → done`, any state → `failed`.
@@ -136,18 +161,24 @@ Next.js FE (:3000) → Axum BE (:8080) → worker: mock poller (default) OR RunP
 `backend/src/state.rs` picks `WorkerClient::Mock` or `WorkerClient::Runpod` from
 `MOCK_MODE`. Mock is the default (anything except the literal string `false`
 keeps it on), needs zero credentials, and advances each job one state every ~5s
-(`done` in ~25s, placeholder scene). Real mode needs the RunPod/R2 vars in
-`backend/.env.example` and a finished worker — `worker/handler.py` is currently a
-**stub** (ROADMAP Phase 1).
+(`done` in ~25s). On reaching `done` a mock job is stamped with
+`{"scene_url":"<base>/artifacts/<DEMO_SCENE_KEY>","is_sample":true}` when that
+var is set, else the inert `{"scene_url":"/demo/scene.html"}` stand-in.
+`is_sample` is load-bearing: every mock job resolves to the SAME scene, and the
+flag is how the frontend labels it honestly instead of inferring from the URL.
+Jobs that finished before a demo scene was configured are repointed on the next
+boot by `db::relabel_legacy_demo_jobs` (idempotent — no reseed needed).
+Real mode needs the RunPod vars in `backend/.env.example` and a finished worker
+— `worker/handler.py` is currently a **stub** (ROADMAP Phase 1).
 
 Backend file responsibilities (each owns one concern):
 
 | File | Owns |
 |---|---|
-| `backend/src/main.rs` | startup wiring: env → DB → migrate → router → serve |
-| `backend/src/state.rs` | `Config` + `AppState`; the one mock-vs-real switch |
-| `backend/src/db.rs` | `Job` struct, state-machine transitions, every SQL query, the tests |
-| `backend/src/routes.rs` | HTTP endpoints: `GET /api/health`, `POST /api/uploads`, `POST/GET /api/jobs`, `GET /api/jobs/{id}`, mock upload sink |
+| `backend/src/main.rs` | startup wiring: env → storage probe → DB → migrate → legacy-job repoint → router → serve |
+| `backend/src/state.rs` | `Config` + `AppState`; the one mock-vs-real switch; `data_dir`/`uploads_dir`/`artifacts_dir` and `demo_artifacts_json` |
+| `backend/src/db.rs` | `Job` struct, state-machine transitions, every SQL query, `relabel_legacy_demo_jobs`, the tests |
+| `backend/src/routes.rs` | HTTP endpoints (`GET /api/health`, `POST /api/uploads`, `POST/GET /api/jobs`, `GET /api/jobs/{id}`) **and all file storage** — `PUT/GET /api/uploads/{uuid}`, `PUT /api/artifacts/{*name}`, `GET /artifacts/*` |
 | `backend/src/worker_client.rs` | the `Mock`/`Runpod` enum seam — how a job is handed to a GPU |
 | `backend/src/poller.rs` | background Tokio task nudging active jobs forward every 5s |
 
@@ -192,8 +223,23 @@ Pipeline gotchas from the LichtFeld manual: COLMAP images must be **undistorted*
 every load — pre-resize photos before training; GPU floor is SM 7.5 with 8 GB+
 VRAM, no multi-GPU.
 
-## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~04:40 UTC)
+## Deployment state (EPHEMERAL — update or remove as things change; last edit 2026-07-20 ~11:40 UTC)
 
+- ⚠️ **The file-storage change is IMPLEMENTED AND TESTED BUT NOT YET PUSHED**
+  (checked 2026-07-20 ~11:40 UTC: `HEAD` is `60ba0c1`, the working tree is
+  dirty, and the live backend still answers `/api/health` without `data_dir`
+  while `/artifacts/scene-3041.html` 404s). Everything in the storage bullet
+  below describes the code as written and verified; the deployed service only
+  gains it after a push, and the sample scene must then be seeded once against
+  the live volume. Verified before pushing: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test` (**16/16**, up from
+  4), `npm run lint`, `npm run build`. Behaviour proven against a running
+  backend: a 5 MB upload round-tripped byte-identical; the 29 MB scene ingested
+  and served byte-identical; gzip negotiated (21,383,663 vs 30,722,794 bytes);
+  admin token absent/wrong/right → 401/401/200; path traversal raw and
+  URL-encoded → 400 with nothing escaping the artifacts dir; a 250 MB upload
+  rejected 413 leaving no partial file; a legacy `done` job repointed across a
+  restart.
 - ✅ **POSTGRES IS LIVE ON RAILWAY (2026-07-20 ~05:00 UTC).** Confirmed by the
   `_sqlx_migrations` and `jobs` tables existing in the Postgres service's Data
   tab — the migration ran for real. **The DB no longer resets on deploy**, which
@@ -213,7 +259,8 @@ VRAM, no multi-GPU.
   Also: right after a push, `/api/health` returning 200 may still be the OLD
   deploy — don't read it as success until the rebuild has actually swapped.
 - **Railway layout**: services `WeddingAI` (backend, volume `weddingai-volume`
-  mounted at `/data`) and `Postgres` (volume `postgres-volume`).
+  mounted at `/data` — 5 GB, confirmed attached) and `Postgres` (volume
+  `postgres-volume`).
 - **Postgres migration DONE + VERIFIED** (`dcb8392`). Verified
   against a real Postgres 16 in Docker, not merely compiled: fmt/clippy/4 tests
   pass, migrations apply, and a full `uploaded → done` job walk exercised every
@@ -223,43 +270,65 @@ VRAM, no multi-GPU.
   `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')` — the obvious
   `CURRENT_TIMESTAMP` would break every date in the Memories grid, because
   `frontend/app/jobs/page.tsx` regex-matches SQLite's exact format to parse UTC.
-- **STORAGE FOR IMAGE BYTES — prefer a Railway BUCKET over a Railway VOLUME**
-  (researched 2026-07-20 ~04:50 UTC; supersedes the earlier volume plan):
-  - Railway **Buckets** are private, fully **S3-compatible** object storage,
-    `$0.015/GB-month` with **unlimited free egress and free S3 API ops**.
-    Credentials live in the bucket's **Credentials** tab. Private by default —
-    serve files via presigned URLs or proxy them through the backend.
-    Created from `+ New` → **Bucket** (it IS in the Add-New-Service menu).
-  - Railway **Volumes** are NOT in that menu — a volume is not a service. You
-    attach one to an EXISTING service (right-click the service on the canvas,
-    or the service's Settings → Volumes; `Cmd+K` → "attach volume" also works).
-    Hard limits: **0.5 GB free / 5 GB Hobby / 50 GB Pro**, **one volume per
-    service**, and **replicas cannot be used with volumes at all**.
-  - **Why Bucket wins here**: the repo is ALREADY built for an S3-compatible
-    store — `backend/.env.example` stubs `R2_ENDPOINT / R2_ACCESS_KEY_ID /
-    R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_PUBLIC_BASE`, `routes.rs:97-104` has
-    the presigning TODO where the 501 lives, and `ROADMAP.md:13` locks
-    "Artifacts: Cloudflare R2 (S3-compatible)". A Railway Bucket is that same
-    shape, hosted next to the backend. Those five env vars map 1:1 — no rename
-    needed, just fill them from the Credentials tab.
-  - **Cost of Bucket over Volume**: needs an S3 SDK (`aws-sdk-s3`, currently NOT
-    in `Cargo.toml`) plus presigning code, vs. a volume's trivial `std::fs`.
-    That is the only reason a volume was ever attractive.
+- ✅ **STORAGE IS THE RAILWAY VOLUME — settled, and the bucket plan is DEAD.**
+  The earlier "prefer a Railway BUCKET" note was reversed once it was costed
+  honestly: a bucket needs `aws-sdk-s3` in `Cargo.toml` plus presigning code
+  plus a second set of credentials to distribute, versus the volume's plain
+  `std::fs` + a static file service. For a demo storing one sample scene and a
+  handful of zips there is nothing to buy. **`R2_*` are deleted from
+  `backend/.env.example`** and `worker/handler.py` / `worker/Dockerfile` use
+  `PUBLIC_BASE_URL` + `ADMIN_TOKEN` + `requests` instead of boto3.
+  - **The volume IS attached: 5 GB, Hobby plan, mounted at `/data`.** This
+    supersedes the old "volume NOT confirmed attached" bullet, which was
+    written when the plan was SQLite-on-a-volume and is simply out of date —
+    the DB is Postgres now and the volume holds files, not the database.
+  - Volume facts worth keeping: a volume is not a service, so it is NOT in the
+    `+ New` menu — attach it to an EXISTING service (right-click on the canvas,
+    or Settings → Volumes). Limits: **0.5 GB free / 5 GB Hobby / 50 GB Pro**,
+    **one volume per service**, and **replicas cannot be used with volumes**.
+  - **⚠️ An unattached volume fails SILENTLY**: `/data` still exists and still
+    accepts writes on the ephemeral container disk, so everything works until
+    the next redeploy erases it. `data_dir_writable: true` in `/api/health`
+    therefore does NOT prove the mount — confirm it in Railway separately.
+  - **Two Railway env vars this needs**: `ADMIN_TOKEN` (guards artifact
+    ingest; if unset, `PUT /api/artifacts/*` 404s) and `DEMO_SCENE_KEY`
+    (`scene-3041.html` — what finished mock jobs point at).
+  - **Seeding the sample scene is a ONE-TIME `scripts/seed-demo-scene.sh` run**
+    per fresh volume, not a per-push chore. It uploads the plain file then the
+    `.gz` (that order matters — see the Architecture section), and recovers the
+    30 MB export from git blob `60ba0c1:frontend/public/demo/scene-3041.html`
+    when it isn't in the working tree, which is the normal case now that the
+    file is gitignored and deleted.
+  - **Why the scene left the repo at all**: it was committed at
+    `frontend/public/demo/scene-3041.html`, and **Vercel silently never
+    published it**, so every deployed viewer 404'd. Committing a large file
+    does not mean the host serves it.
+  - **Egress now comes from Railway, not Vercel's CDN** — ~21 MB gzipped
+    (30.7 MB raw) per viewer load of the sample scene. Watch it if the demo
+    gets traffic.
+  - **Nothing deletes old uploads.** At `MAX_UPLOAD_BYTES` = 200 MB the 5 GB
+    volume fills at ~25 uploads. A retention sweep is unbuilt (TODO 1.7).
 - **Local dev now REQUIRES a database**: `docker compose up -d` from `backend/`.
   Postgres has no `sqlite::memory:` equivalent, so `cargo run` AND `cargo test`
   both need a live server (CI got a Postgres service container). Tests each get
   their own schema so parallel runs can't collide on one `jobs` table.
 - **Backend LIVE**: `https://weddingai-production.up.railway.app` (mock mode).
-  `GET /api/health` verifies process + DB + config in one request (reports
-  `mock_mode`, `public_base_url`, `version`; 503 if DB unreachable). Railway
+  `GET /api/health` verifies process + DB + storage + config in one request
+  (reports `mock_mode`, `public_base_url`, `data_dir`, `data_dir_writable`,
+  `demo_scene_key`, `version`; 503 if DB unreachable). Railway
   auto-deploys on every push to main via `backend/Dockerfile` (pins rust:1.88 —
   Railway's default Railpack rustc 1.85 is too old for the locked `icu_*` crates).
-- Mock upload URL is built from `PUBLIC_BASE_URL`, falling back to Railway's
-  injected `RAILWAY_PUBLIC_DOMAIN`, else `http://localhost:PORT` (fixed
-  2026-07-19 — was hardcoded localhost, which broke the deployed upload flow).
-- Railway volume for SQLite NOT confirmed attached — until it is (mount `/data`
-  + `DATABASE_URL=sqlite:///data/data.db?mode=rwc`), the DB resets on each
-  redeploy. Optional: set Railway healthcheck path to `/api/health`.
+- The upload URL `POST /api/uploads` hands back is built from
+  `PUBLIC_BASE_URL`, falling back to Railway's injected `RAILWAY_PUBLIC_DOMAIN`,
+  else `http://localhost:PORT` (fixed 2026-07-19 — was hardcoded localhost,
+  which broke the deployed upload flow). Same URL in mock and real mode now:
+  it points at the backend's own `PUT /api/uploads/{uuid}` sink, so the old
+  501 "R2 presigning not configured" branch is gone.
+- ~~Railway volume for SQLite NOT confirmed attached~~ — **obsolete, and it
+  contradicted the storage bullet above. The volume IS attached (5 GB at
+  `/data`), and it no longer has anything to do with the database**: the DB is
+  Railway Postgres, and the volume holds upload zips and scene artifacts.
+  Optional: set Railway healthcheck path to `/api/health`.
 - **Frontend FULLY WIRED + Gemini key LIVE (verified ~20:52 UTC)**:
   `https://wedding-ai-omega.vercel.app` bundle points at Railway; both env vars
   set in Vercel Production. `/api/analyze` verified END-TO-END on the live site
@@ -413,8 +482,13 @@ reconstructed volume is the island/counter/desk only. Fly the camera wide of the
 capture path and it stretches. A fuller room needs a second 20-30s orbit at a
 wider radius, then `exhaustive_matcher` across both takes for loop closure.
 
-⚠️ **30.7 MB is too big to commit.** Serving it from the deployed app needs
-object storage (the repo already stubs `R2_*`; a Railway Bucket maps 1:1).
+✅ **30.7 MB is too big to commit — SOLVED.** It was committed to
+`frontend/public/demo/scene-3041.html` and **Vercel silently never published
+it**, so the deployed viewer 404'd. It now lives on the backend's Railway
+volume, uploaded once by `scripts/seed-demo-scene.sh` and served from
+`/artifacts` (gzipped: 21.4 MB on the wire). The file is gitignored and deleted
+from the working tree; the script recovers it from git blob
+`60ba0c1:frontend/public/demo/scene-3041.html`.
 
 **Two root causes, both found by experiment — record them so nobody re-guesses:**
 1. The mass `.o.d: No such file or directory` failure was **NOT** a MooseFS/network
